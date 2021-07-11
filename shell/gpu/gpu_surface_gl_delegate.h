@@ -25,7 +25,7 @@ class GPUSurfaceGLDelegate {
   ~GPUSurfaceGLDelegate();
 
   // Called to make the main GL context current on the current thread.
-  virtual std::unique_ptr<GLContextResult> GLContextMakeCurrent() = 0;
+  virtual std::unique_ptr<GLContextSwitch> GLContextMakeCurrent() = 0;
 
   // Called to clear the current GL context on the thread. This may be called on
   // either the GPU or IO threads.

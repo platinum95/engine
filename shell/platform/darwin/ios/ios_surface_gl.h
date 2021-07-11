@@ -32,7 +32,7 @@ class IOSSurfaceGL final : public IOSSurface, public GPUSurfaceGLDelegate {
   std::unique_ptr<Surface> CreateGPUSurface(GrDirectContext* gr_context) override;
 
   // |GPUSurfaceGLDelegate|
-  std::unique_ptr<GLContextResult> GLContextMakeCurrent() override;
+  std::unique_ptr<GLContextSwitch> GLContextMakeCurrent() override;
 
   // |GPUSurfaceGLDelegate|
   bool GLContextClearCurrent() override;

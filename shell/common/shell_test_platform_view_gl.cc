@@ -52,9 +52,13 @@ PointerDataDispatcherMaker ShellTestPlatformViewGL::GetDispatcherMaker() {
 }
 
 // |GPUSurfaceGLDelegate|
-std::unique_ptr<GLContextResult>
+std::unique_ptr<GLContextSwitch>
 ShellTestPlatformViewGL::GLContextMakeCurrent() {
-  return std::make_unique<GLContextDefaultResult>(gl_surface_.MakeCurrent());
+  auto switcher = std::make_unique<EmbeddedSwitchableContext>(
+      [this] { return gl_surface_.MakeCurrent(); },
+      [this] { return gl_surface_.ClearCurrent(); } );
+
+  return std::make_unique<GLContextSwitch>( std::move( switcher ) );
 }
 
 // |GPUSurfaceGLDelegate|

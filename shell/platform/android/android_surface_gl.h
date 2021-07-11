@@ -49,7 +49,7 @@ class AndroidSurfaceGL final : public GPUSurfaceGLDelegate,
   bool SetNativeWindow(fml::RefPtr<AndroidNativeWindow> window) override;
 
   // |GPUSurfaceGLDelegate|
-  std::unique_ptr<GLContextResult> GLContextMakeCurrent() override;
+  std::unique_ptr<GLContextSwitch> GLContextMakeCurrent() override;
 
   // |GPUSurfaceGLDelegate|
   bool GLContextClearCurrent() override;

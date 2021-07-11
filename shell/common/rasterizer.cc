@@ -307,6 +307,7 @@ sk_sp<SkImage> Rasterizer::DoMakeRasterSnapshot(
 
               surface->getCanvas()->scale(scale_factor, scale_factor);
               result = DrawSnapshot(surface, draw_callback);
+              surface_->ClearRenderContext();
             }));
   }
 

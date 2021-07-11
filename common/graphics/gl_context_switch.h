@@ -109,6 +109,32 @@ class GLContextSwitch final : public GLContextResult {
   FML_DISALLOW_COPY_AND_ASSIGN(GLContextSwitch);
 };
 
+
+class EmbeddedSwitchableContext : public SwitchableGLContext {
+public:
+  EmbeddedSwitchableContext( std::function<bool()> setCurrent,
+    std::function<bool()> removeCurrent ) 
+      : m_setCurrent( setCurrent )
+      , m_removeCurrent( removeCurrent ) {
+
+  }
+
+  bool SetCurrent() override {
+    return m_setCurrent();
+  }
+
+  // Implement this to remove the context wrapped by this |SwitchableGLContext|
+  // object from current context;
+  bool RemoveCurrent() override {
+    return m_removeCurrent();
+  }
+
+private:
+  std::function<bool()> m_setCurrent;
+  std::function<bool()> m_removeCurrent;
+};
+
+
 }  // namespace flutter
 
 #endif  // FLUTTER_COMMON_GRAPHICS_GL_CONTEXT_SWITCH_H_
