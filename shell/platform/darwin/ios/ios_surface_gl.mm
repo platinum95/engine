@@ -67,15 +67,18 @@ bool IOSSurfaceGL::SurfaceSupportsReadback() const {
 
 // |GPUSurfaceGLDelegate|
 std::unique_ptr<GLContextSwitch> IOSSurfaceGL::GLContextMakeCurrent() {
-  
   if (!IsValid()) {
-    return std::make_unique<GLContextSwitch>( std::make_unique<EmbeddedSwitchableContext>( [](){ return false; }, [](){ return false; } ) );
+    return std::make_unique<GLContextSwitch>(std::make_unique<EmbeddedSwitchableContext>(
+        []() { return false; }, []() { return false; }));
   }
   bool update_if_necessary = render_target_->UpdateStorageSizeIfNecessary();
   if (!update_if_necessary) {
-    return std::make_unique<GLContextSwitch>( std::make_unique<EmbeddedSwitchableContext>( [](){ return false; }, [](){ return false; } ) );
+    return std::make_unique<GLContextSwitch>(std::make_unique<EmbeddedSwitchableContext>(
+        []() { return false; }, []() { return false; }));
   }
-  return std::make_unique<GLContextSwitch>( std::make_unique<EmbeddedSwitchableContext>( [this](){ return GetContext()->MakeCurrent(); }, [this](){ return GetContext()->GLContextClearCurrent(); } ) );
+  return std::make_unique<GLContextSwitch>(std::make_unique<EmbeddedSwitchableContext>(
+      [this]() { return GetContext()->MakeCurrent(); },
+      [this]() { return GetContext()->GLContextClearCurrent(); }));
 }
 
 // |GPUSurfaceGLDelegate|

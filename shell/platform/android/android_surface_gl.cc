@@ -119,9 +119,9 @@ std::unique_ptr<GLContextSwitch> AndroidSurfaceGL::GLContextMakeCurrent() {
 
   auto switcher = std::make_unique<EmbeddedSwitchableContext>(
       [this] { return onscreen_surface_->MakeCurrent(); },
-      [this] { return onscreen_surface_.ClearCurrent(); } );
-   
-  return std::make_unique<GLContextSwitch>( std::move( switcher ) );
+      [this] { return onscreen_surface_->ClearCurrent(); });
+
+  return std::make_unique<GLContextSwitch>(std::move(switcher));
 }
 
 bool AndroidSurfaceGL::GLContextClearCurrent() {

@@ -12,10 +12,9 @@ AndroidSurfaceMock::AndroidSurfaceMock(
 
 std::unique_ptr<GLContextSwitch> AndroidSurfaceMock::GLContextMakeCurrent() {
   auto switcher = std::make_unique<EmbeddedSwitchableContext>(
-      [] { return true; },
-      [] { return true; } );
-   
-  return std::make_unique<GLContextSwitch>( std::move( switcher ) );
+      [] { return true; }, [] { return true; });
+
+  return std::make_unique<GLContextSwitch>(std::move(switcher));
 }
 
 bool AndroidSurfaceMock::GLContextClearCurrent() {
