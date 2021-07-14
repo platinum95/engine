@@ -19,7 +19,7 @@ SurfaceFrame::SurfaceFrame(sk_sp<SkSurface> surface,
 SurfaceFrame::SurfaceFrame(sk_sp<SkSurface> surface,
                            bool supports_readback,
                            const SubmitCallback& submit_callback,
-                           std::unique_ptr<GLContextResult> context_result)
+                           std::unique_ptr<GLContextSwitch> context_result)
     : submitted_(false),
       surface_(surface),
       supports_readback_(supports_readback),
