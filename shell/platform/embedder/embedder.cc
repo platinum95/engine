@@ -484,7 +484,7 @@ static sk_sp<SkSurface> MakeSkSurfaceFromBackingStore(
     const FlutterOpenGLFramebuffer* framebuffer) {
 #ifdef SHELL_ENABLE_GL
   GrGLFramebufferInfo framebuffer_info = {};
-  framebuffer_info.fFormat = framebuffer->target;
+  framebuffer_info.fFormat = framebuffer->format;
   framebuffer_info.fFBOID = framebuffer->name;
 
   GrBackendRenderTarget backend_render_target(

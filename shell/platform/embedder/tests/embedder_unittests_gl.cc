@@ -3587,7 +3587,7 @@ TEST_F(EmbedderTest, CreateInvalidBackingstoreOpenGLFramebuffer) {
         // Deliberately set this to be invalid
         backing_store_out->user_data = nullptr;
         backing_store_out->open_gl.type = kFlutterOpenGLTargetTypeFramebuffer;
-        backing_store_out->open_gl.framebuffer.target = 0;
+        backing_store_out->open_gl.framebuffer.format = 0;
         backing_store_out->open_gl.framebuffer.name = 0;
         backing_store_out->open_gl.framebuffer.user_data =
             new TestCollectOnce();

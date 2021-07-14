@@ -88,7 +88,7 @@ bool EmbedderTestBackingStoreProducer::CreateFramebuffer(
   backing_store_out->type = kFlutterBackingStoreTypeOpenGL;
   backing_store_out->user_data = surface.get();
   backing_store_out->open_gl.type = kFlutterOpenGLTargetTypeFramebuffer;
-  backing_store_out->open_gl.framebuffer.target = framebuffer_info.fFormat;
+  backing_store_out->open_gl.framebuffer.format = framebuffer_info.fFormat;
   backing_store_out->open_gl.framebuffer.name = framebuffer_info.fFBOID;
   // The balancing unref is in the destruction callback.
   surface->ref();

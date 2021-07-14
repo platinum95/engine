@@ -60,7 +60,7 @@ inline bool operator==(const FlutterOpenGLTexture& a,
 
 inline bool operator==(const FlutterOpenGLFramebuffer& a,
                        const FlutterOpenGLFramebuffer& b) {
-  return a.target == b.target && a.name == b.name &&
+  return a.format == b.format && a.name == b.name &&
          a.user_data == b.user_data &&
          a.destruction_callback == b.destruction_callback;
 }
@@ -244,8 +244,8 @@ inline std::ostream& operator<<(std::ostream& out,
 
 inline std::ostream& operator<<(std::ostream& out,
                                 const FlutterOpenGLFramebuffer& item) {
-  return out << "(FlutterOpenGLFramebuffer) Target: 0x" << std::hex
-             << item.target << std::dec << " Name: " << item.name
+  return out << "(FlutterOpenGLFramebuffer) Format: 0x" << std::hex
+             << item.format << std::dec << " Name: " << item.name
              << " User Data: " << item.user_data << " Destruction Callback: "
              << reinterpret_cast<void*>(item.destruction_callback);
 }

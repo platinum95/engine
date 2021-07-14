@@ -59,7 +59,7 @@ bool FlutterGLCompositor::CreateBackingStore(const FlutterBackingStoreConfig* co
 
   backing_store_out->type = kFlutterBackingStoreTypeOpenGL;
   backing_store_out->open_gl.type = kFlutterOpenGLTargetTypeFramebuffer;
-  backing_store_out->open_gl.framebuffer.target = GL_RGBA8;
+  backing_store_out->open_gl.framebuffer.format = GL_RGBA8;
   backing_store_out->open_gl.framebuffer.destruction_callback = [](void* user_data) {
     if (user_data != nullptr) {
       // This deletes the OpenGL framebuffer object and texture backing it.
