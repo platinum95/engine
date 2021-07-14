@@ -220,9 +220,11 @@ std::unique_ptr<SurfaceFrame> GPUSurfaceGL::AcquireFrame(const SkISize& size) {
   // external view embedder may want to render to the root surface.
   if (!render_to_surface_) {
     return std::make_unique<SurfaceFrame>(
-        nullptr, true, [](const SurfaceFrame& surface_frame, SkCanvas* canvas) {
+        nullptr, true,
+        [](const SurfaceFrame& surface_frame, SkCanvas* canvas) {
           return true;
-        }, std::move(context_switch));
+        },
+        std::move(context_switch));
   }
 
   const auto root_surface_transformation = GetRootTransformation();
