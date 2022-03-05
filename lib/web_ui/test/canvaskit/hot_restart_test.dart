@@ -21,20 +21,20 @@ void testMain() {
         () async {
       expect(windowFlutterCanvasKit, isNull);
 
-      DomRenderer();
+      FlutterViewEmbedder();
       await ui.webOnlyInitializePlatform(
           assetManager: WebOnlyMockAssetManager());
       expect(windowFlutterCanvasKit, isNotNull);
 
-      var firstCanvasKitInstance = windowFlutterCanvasKit;
+      final CanvasKit? firstCanvasKitInstance = windowFlutterCanvasKit;
 
       // Triggers a reset of the CanvasKit script element.
-      DomRenderer();
+      FlutterViewEmbedder();
       await ui.webOnlyInitializePlatform(
           assetManager: WebOnlyMockAssetManager());
       // The instance is the same.
       expect(firstCanvasKitInstance, windowFlutterCanvasKit);
     });
-    // TODO: https://github.com/flutter/flutter/issues/60040
+    // TODO(hterkelsen): https://github.com/flutter/flutter/issues/60040
   }, skip: isIosSafari);
 }

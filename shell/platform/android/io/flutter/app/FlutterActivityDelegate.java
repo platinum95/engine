@@ -24,9 +24,9 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
 import android.view.WindowManager.LayoutParams;
+import androidx.core.view.WindowCompat;
 import io.flutter.Log;
 import io.flutter.plugin.common.PluginRegistry;
-import io.flutter.plugin.platform.PlatformPlugin;
 import io.flutter.util.Preconditions;
 import io.flutter.view.FlutterMain;
 import io.flutter.view.FlutterNativeView;
@@ -43,7 +43,7 @@ import java.util.ArrayList;
  * The most obvious example of when this may come in handy is if an application wishes to subclass
  * the Android v4 support library's {@code FragmentActivity}.
  *
- * <h3>Usage:</h3>
+ * <p><b>Usage:</b>
  *
  * <p>To wire this class up to your activity, simply forward the events defined in {@link
  * FlutterActivityEvents} from your activity to an instance of this class. Optionally, you can make
@@ -141,7 +141,14 @@ public final class FlutterActivityDelegate
       Window window = activity.getWindow();
       window.addFlags(LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
       window.setStatusBarColor(0x40000000);
-      window.getDecorView().setSystemUiVisibility(PlatformPlugin.DEFAULT_SYSTEM_UI);
+      WindowCompat.setDecorFitsSystemWindows(window, false);
+      if (Build.VERSION.SDK_INT < 30) {
+        // This ensures that the navigation bar is not hidden for APIs < 30,
+        // as dictated by the implementation of WindowCompat.
+        View view = window.getDecorView();
+        view.setSystemUiVisibility(
+            view.getSystemUiVisibility() & ~View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION);
+      }
     }
 
     String[] args = getArgsFromIntent(activity.getIntent());
@@ -425,9 +432,7 @@ public final class FlutterActivityDelegate
       ActivityInfo activityInfo =
           activity
               .getPackageManager()
-              .getActivityInfo(
-                  activity.getComponentName(),
-                  PackageManager.GET_META_DATA | PackageManager.GET_ACTIVITIES);
+              .getActivityInfo(activity.getComponentName(), PackageManager.GET_META_DATA);
       Bundle metadata = activityInfo.metaData;
       return metadata != null && metadata.getBoolean(SPLASH_SCREEN_META_DATA_KEY);
     } catch (NameNotFoundException e) {

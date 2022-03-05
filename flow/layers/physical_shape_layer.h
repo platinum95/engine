@@ -17,21 +17,7 @@ class PhysicalShapeLayer : public ContainerLayer {
                      const SkPath& path,
                      Clip clip_behavior);
 
-  static SkRect ComputeShadowBounds(const SkRect& bounds,
-                                    float elevation,
-                                    float pixel_ratio);
-  static void DrawShadow(SkCanvas* canvas,
-                         const SkPath& path,
-                         SkColor color,
-                         float elevation,
-                         bool transparentOccluder,
-                         SkScalar dpr);
-
-#ifdef FLUTTER_ENABLE_DIFF_CONTEXT
-
   void Diff(DiffContext* context, const Layer* old_layer) override;
-
-#endif  // FLUTTER_ENABLE_DIFF_CONTEXT
 
   void Preroll(PrerollContext* context, const SkMatrix& matrix) override;
 

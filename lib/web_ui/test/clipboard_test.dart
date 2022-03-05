@@ -7,15 +7,14 @@ import 'dart:typed_data';
 
 import 'package:test/bootstrap/browser.dart';
 import 'package:test/test.dart';
-import 'package:ui/ui.dart' as ui;
 import 'package:ui/src/engine.dart';
 
 void main() {
   internalBootstrapBrowserTest(() => testMain);
 }
 
-void testMain() async {
-  await ui.webOnlyInitializeTestDomRenderer();
+Future<void> testMain() async {
+  await initializeTestFlutterViewEmbedder();
   group('message handler', () {
     const String testText = 'test text';
 
@@ -26,7 +25,7 @@ void testMain() async {
         MockClipboardAPIPasteStrategy();
 
     setUp(() {
-      clipboardMessageHandler = new ClipboardMessageHandler();
+      clipboardMessageHandler = ClipboardMessageHandler();
       clipboardAPICopyStrategy = MockClipboardAPICopyStrategy();
       clipboardAPIPasteStrategy = MockClipboardAPIPasteStrategy();
       clipboardMessageHandler.copyToClipboardStrategy =
@@ -39,9 +38,9 @@ void testMain() async {
       clipboardAPICopyStrategy.testResult = true;
       const MethodCodec codec = JSONMethodCodec();
       final Completer<bool> completer = Completer<bool>();
-      ui.PlatformMessageResponseCallback callback = (ByteData? data) {
-        completer.complete(codec.decodeEnvelope(data!));
-      };
+      void callback(ByteData? data) {
+        completer.complete(codec.decodeEnvelope(data!) as bool);
+      }
 
       clipboardMessageHandler.setDataMethodCall(
           const MethodCall('Clipboard.setData', <String, dynamic>{
@@ -56,9 +55,9 @@ void testMain() async {
       clipboardAPICopyStrategy.testResult = false;
       const MethodCodec codec = JSONMethodCodec();
       final Completer<ByteData> completer = Completer<ByteData>();
-      ui.PlatformMessageResponseCallback callback = (ByteData? data) {
+      void callback(ByteData? data) {
         completer.complete(data!);
-      };
+      }
 
       clipboardMessageHandler.setDataMethodCall(
           const MethodCall('Clipboard.setData', <String, dynamic>{
@@ -69,17 +68,17 @@ void testMain() async {
       final ByteData result = await completer.future;
       expect(
         () =>codec.decodeEnvelope(result),
-        throwsA(TypeMatcher<PlatformException>()
-          .having((e) => e.code, 'code', equals('copy_fail'))));
+        throwsA(const TypeMatcher<PlatformException>()
+          .having((PlatformException e) => e.code, 'code', equals('copy_fail'))));
     });
 
     test('get data successful', () async {
       clipboardAPIPasteStrategy.testResult = testText;
       const MethodCodec codec = JSONMethodCodec();
       final Completer<Map<String, dynamic>> completer = Completer<Map<String, dynamic>>();
-      ui.PlatformMessageResponseCallback callback = (ByteData? data) {
-        completer.complete(codec.decodeEnvelope(data!));
-      };
+      void callback(ByteData? data) {
+        completer.complete(codec.decodeEnvelope(data!) as Map<String, dynamic>);
+      }
 
       clipboardMessageHandler.getDataMethodCall(callback);
 

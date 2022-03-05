@@ -1,10 +1,13 @@
 package io.flutter.plugin.platform;
 
-import static org.junit.Assert.assertEquals;
+import static android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS;
+import static android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.Mockito.anyBoolean;
+import static org.mockito.Mockito.anyInt;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
@@ -12,33 +15,39 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import android.annotation.TargetApi;
 import android.app.Activity;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.ContentResolver;
 import android.content.Context;
-import android.media.RingtoneManager;
 import android.net.Uri;
 import android.os.Build;
 import android.view.View;
 import android.view.Window;
-import androidx.activity.OnBackPressedDispatcher;
+import android.view.WindowInsetsController;
+import androidx.activity.OnBackPressedCallback;
+import androidx.core.view.WindowInsetsCompat;
+import androidx.core.view.WindowInsetsControllerCompat;
 import androidx.fragment.app.FragmentActivity;
+import androidx.test.ext.junit.runners.AndroidJUnit4;
 import io.flutter.embedding.engine.systemchannels.PlatformChannel;
+import io.flutter.embedding.engine.systemchannels.PlatformChannel.Brightness;
 import io.flutter.embedding.engine.systemchannels.PlatformChannel.ClipboardContentFormat;
 import io.flutter.embedding.engine.systemchannels.PlatformChannel.SystemChromeStyle;
 import io.flutter.plugin.platform.PlatformPlugin.PlatformPluginDelegate;
-import java.io.ByteArrayInputStream;
 import java.io.IOException;
-import java.io.InputStream;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-import org.robolectric.RobolectricTestRunner;
+import org.robolectric.Robolectric;
 import org.robolectric.RuntimeEnvironment;
 import org.robolectric.annotation.Config;
 
 @Config(manifest = Config.NONE)
-@RunWith(RobolectricTestRunner.class)
+@RunWith(AndroidJUnit4.class)
 public class PlatformPluginTest {
   @Config(sdk = 16)
   @Test
@@ -80,21 +89,11 @@ public class PlatformPluginTest {
     assertNotNull(platformPlugin.mPlatformMessageHandler.getClipboardData(clipboardFormat));
 
     ContentResolver contentResolver = RuntimeEnvironment.application.getContentResolver();
+    when(fakeActivity.getContentResolver()).thenReturn(contentResolver);
     Uri uri = Uri.parse("content://media/external_primary/images/media/");
     clip = ClipData.newUri(contentResolver, "URI", uri);
     clipboardManager.setPrimaryClip(clip);
     assertNull(platformPlugin.mPlatformMessageHandler.getClipboardData(clipboardFormat));
-
-    uri =
-        RingtoneManager.getActualDefaultRingtoneUri(
-            RuntimeEnvironment.application.getApplicationContext(), RingtoneManager.TYPE_RINGTONE);
-    clip = ClipData.newUri(contentResolver, "URI", uri);
-    clipboardManager.setPrimaryClip(clip);
-    String uriData =
-        platformPlugin.mPlatformMessageHandler.getClipboardData(clipboardFormat).toString();
-    InputStream uriInputStream = contentResolver.openInputStream(uri);
-    InputStream dataInputStream = new ByteArrayInputStream(uriData.getBytes());
-    assertEquals(dataInputStream.read(), uriInputStream.read());
   }
 
   @Config(sdk = 28)
@@ -162,21 +161,168 @@ public class PlatformPluginTest {
     when(fakeActivity.getWindow()).thenReturn(fakeWindow);
     PlatformChannel fakePlatformChannel = mock(PlatformChannel.class);
     PlatformPlugin platformPlugin = new PlatformPlugin(fakeActivity, fakePlatformChannel);
-    SystemChromeStyle style =
-        new SystemChromeStyle(0XFF000000, null, true, 0XFFC70039, null, 0XFF006DB3, true);
 
     if (Build.VERSION.SDK_INT >= 28) {
+      // Default style test
+      SystemChromeStyle style =
+          new SystemChromeStyle(
+              0XFF000000, // statusBarColor
+              Brightness.LIGHT, // statusBarIconBrightness
+              true, // systemStatusBarContrastEnforced
+              0XFFC70039, // systemNavigationBarColor
+              Brightness.LIGHT, // systemNavigationBarIconBrightness
+              0XFF006DB3, // systemNavigationBarDividerColor
+              true); // systemNavigationBarContrastEnforced
+
       platformPlugin.mPlatformMessageHandler.setSystemUiOverlayStyle(style);
 
-      assertEquals(0XFF006DB3, fakeActivity.getWindow().getNavigationBarDividerColor());
-      assertEquals(0XFFC70039, fakeActivity.getWindow().getStatusBarColor());
-      assertEquals(0XFF000000, fakeActivity.getWindow().getNavigationBarColor());
+      verify(fakeWindow).setStatusBarColor(0xFF000000);
+      verify(fakeWindow).setNavigationBarColor(0XFFC70039);
+      verify(fakeWindow).setNavigationBarDividerColor(0XFF006DB3);
+      verify(fakeWindow).setStatusBarContrastEnforced(true);
+      verify(fakeWindow).setNavigationBarContrastEnforced(true);
+
+      // Regression test for https://github.com/flutter/flutter/issues/88431
+      // A null brightness should not affect changing color settings.
+      style =
+          new SystemChromeStyle(
+              0XFF006DB3, // statusBarColor
+              null, // statusBarIconBrightness
+              false, // systemStatusBarContrastEnforced
+              0XFF000000, // systemNavigationBarColor
+              null, // systemNavigationBarIconBrightness
+              0XFF006DB3, // systemNavigationBarDividerColor
+              false); // systemNavigationBarContrastEnforced
+
+      platformPlugin.mPlatformMessageHandler.setSystemUiOverlayStyle(style);
+
+      verify(fakeWindow).setStatusBarColor(0XFF006DB3);
+      verify(fakeWindow).setNavigationBarColor(0XFF000000);
+      verify(fakeWindow, times(2)).setNavigationBarDividerColor(0XFF006DB3);
+      verify(fakeWindow).setStatusBarContrastEnforced(false);
+      verify(fakeWindow).setNavigationBarContrastEnforced(false);
+
+      // Null contrasts values should be allowed.
+      style =
+          new SystemChromeStyle(
+              0XFF006DB3, // statusBarColor
+              null, // statusBarIconBrightness
+              null, // systemStatusBarContrastEnforced
+              0XFF000000, // systemNavigationBarColor
+              null, // systemNavigationBarIconBrightness
+              0XFF006DB3, // systemNavigationBarDividerColor
+              null); // systemNavigationBarContrastEnforced
+
+      platformPlugin.mPlatformMessageHandler.setSystemUiOverlayStyle(style);
+
+      verify(fakeWindow, times(2)).setStatusBarColor(0XFF006DB3);
+      verify(fakeWindow, times(2)).setNavigationBarColor(0XFF000000);
+      verify(fakeWindow, times(3)).setNavigationBarDividerColor(0XFF006DB3);
+      // Count is 1 each from earlier calls
+      verify(fakeWindow, times(1)).setStatusBarContrastEnforced(true);
+      verify(fakeWindow, times(1)).setNavigationBarContrastEnforced(true);
+      verify(fakeWindow, times(1)).setStatusBarContrastEnforced(false);
+      verify(fakeWindow, times(1)).setNavigationBarContrastEnforced(false);
+    }
+  }
+
+  @Config(sdk = 30)
+  @Test
+  public void setNavigationBarIconBrightness() {
+    if (Build.VERSION.SDK_INT >= 30) {
+      View fakeDecorView = mock(View.class);
+      WindowInsetsController fakeWindowInsetsController = mock(WindowInsetsController.class);
+      Window fakeWindow = mock(Window.class);
+      when(fakeWindow.getDecorView()).thenReturn(fakeDecorView);
+      when(fakeWindow.getInsetsController()).thenReturn(fakeWindowInsetsController);
+      Activity fakeActivity = mock(Activity.class);
+      when(fakeActivity.getWindow()).thenReturn(fakeWindow);
+      PlatformChannel fakePlatformChannel = mock(PlatformChannel.class);
+      PlatformPlugin platformPlugin = new PlatformPlugin(fakeActivity, fakePlatformChannel);
+
+      SystemChromeStyle style =
+          new SystemChromeStyle(
+              null, // statusBarColor
+              null, // statusBarIconBrightness
+              null, // systemStatusBarContrastEnforced
+              null, // systemNavigationBarColor
+              Brightness.LIGHT, // systemNavigationBarIconBrightness
+              null, // systemNavigationBarDividerColor
+              null); // systemNavigationBarContrastEnforced
+
+      platformPlugin.mPlatformMessageHandler.setSystemUiOverlayStyle(style);
+
+      verify(fakeWindowInsetsController)
+          .setSystemBarsAppearance(0, APPEARANCE_LIGHT_NAVIGATION_BARS);
+
+      style =
+          new SystemChromeStyle(
+              null, // statusBarColor
+              null, // statusBarIconBrightness
+              null, // systemStatusBarContrastEnforced
+              null, // systemNavigationBarColor
+              Brightness.DARK, // systemNavigationBarIconBrightness
+              null, // systemNavigationBarDividerColor
+              null); // systemNavigationBarContrastEnforced
+
+      platformPlugin.mPlatformMessageHandler.setSystemUiOverlayStyle(style);
+
+      verify(fakeWindowInsetsController)
+          .setSystemBarsAppearance(
+              APPEARANCE_LIGHT_NAVIGATION_BARS, APPEARANCE_LIGHT_NAVIGATION_BARS);
+    }
+  }
+
+  @Config(sdk = 30)
+  @Test
+  public void setStatusBarIconBrightness() {
+    if (Build.VERSION.SDK_INT >= 30) {
+      View fakeDecorView = mock(View.class);
+      WindowInsetsController fakeWindowInsetsController = mock(WindowInsetsController.class);
+      Window fakeWindow = mock(Window.class);
+      when(fakeWindow.getDecorView()).thenReturn(fakeDecorView);
+      when(fakeWindow.getInsetsController()).thenReturn(fakeWindowInsetsController);
+      Activity fakeActivity = mock(Activity.class);
+      when(fakeActivity.getWindow()).thenReturn(fakeWindow);
+      PlatformChannel fakePlatformChannel = mock(PlatformChannel.class);
+      PlatformPlugin platformPlugin = new PlatformPlugin(fakeActivity, fakePlatformChannel);
+
+      SystemChromeStyle style =
+          new SystemChromeStyle(
+              null, // statusBarColor
+              Brightness.LIGHT, // statusBarIconBrightness
+              null, // systemStatusBarContrastEnforced
+              null, // systemNavigationBarColor
+              null, // systemNavigationBarIconBrightness
+              null, // systemNavigationBarDividerColor
+              null); // systemNavigationBarContrastEnforced
+
+      platformPlugin.mPlatformMessageHandler.setSystemUiOverlayStyle(style);
+
+      verify(fakeWindowInsetsController).setSystemBarsAppearance(0, APPEARANCE_LIGHT_STATUS_BARS);
+
+      style =
+          new SystemChromeStyle(
+              null, // statusBarColor
+              Brightness.DARK, // statusBarIconBrightness
+              null, // systemStatusBarContrastEnforced
+              null, // systemNavigationBarColor
+              null, // systemNavigationBarIconBrightness
+              null, // systemNavigationBarDividerColor
+              null); // systemNavigationBarContrastEnforced
+
+      platformPlugin.mPlatformMessageHandler.setSystemUiOverlayStyle(style);
+
+      verify(fakeWindowInsetsController)
+          .setSystemBarsAppearance(APPEARANCE_LIGHT_STATUS_BARS, APPEARANCE_LIGHT_STATUS_BARS);
     }
   }
 
   @Config(sdk = 29)
   @Test
-  public void setSystemUiMode() {
+  public void setSystemUiModeLegacy() {
+    // This test reflects the behavior under the hood of the Android overlay/inset APIs used for API
+    // 20-29 in the plugin.
     View fakeDecorView = mock(View.class);
     Window fakeWindow = mock(Window.class);
     when(fakeWindow.getDecorView()).thenReturn(fakeDecorView);
@@ -188,44 +334,234 @@ public class PlatformPluginTest {
     if (Build.VERSION.SDK_INT >= 28) {
       platformPlugin.mPlatformMessageHandler.showSystemUiMode(
           PlatformChannel.SystemUiMode.LEAN_BACK);
-      assertEquals(
-          View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-              | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
-              | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-              | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-              | View.SYSTEM_UI_FLAG_FULLSCREEN,
-          fakeActivity.getWindow().getDecorView().getSystemUiVisibility());
+
+      verify(fakeDecorView).setSystemUiVisibility(View.SYSTEM_UI_FLAG_FULLSCREEN);
+      verify(fakeDecorView).setSystemUiVisibility(View.SYSTEM_UI_FLAG_HIDE_NAVIGATION);
+      verify(fakeDecorView)
+          .setSystemUiVisibility(
+              View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                  | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                  | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN);
 
       platformPlugin.mPlatformMessageHandler.showSystemUiMode(
           PlatformChannel.SystemUiMode.IMMERSIVE);
-      assertEquals(
-          View.SYSTEM_UI_FLAG_IMMERSIVE
-              | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-              | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
-              | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-              | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-              | View.SYSTEM_UI_FLAG_FULLSCREEN,
-          fakeActivity.getWindow().getDecorView().getSystemUiVisibility());
+      verify(fakeDecorView).setSystemUiVisibility(View.SYSTEM_UI_FLAG_IMMERSIVE);
+      verify(fakeDecorView, times(2)).setSystemUiVisibility(View.SYSTEM_UI_FLAG_FULLSCREEN);
+      verify(fakeDecorView, times(2)).setSystemUiVisibility(View.SYSTEM_UI_FLAG_HIDE_NAVIGATION);
+      verify(fakeDecorView, times(2))
+          .setSystemUiVisibility(
+              View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                  | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                  | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN);
 
       platformPlugin.mPlatformMessageHandler.showSystemUiMode(
           PlatformChannel.SystemUiMode.IMMERSIVE_STICKY);
-      assertEquals(
-          View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
-              | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-              | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
-              | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-              | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-              | View.SYSTEM_UI_FLAG_FULLSCREEN,
-          fakeActivity.getWindow().getDecorView().getSystemUiVisibility());
+      verify(fakeDecorView).setSystemUiVisibility(View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
+      verify(fakeDecorView, times(3)).setSystemUiVisibility(View.SYSTEM_UI_FLAG_FULLSCREEN);
+      verify(fakeDecorView, times(3)).setSystemUiVisibility(View.SYSTEM_UI_FLAG_HIDE_NAVIGATION);
+      verify(fakeDecorView, times(3))
+          .setSystemUiVisibility(
+              View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                  | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                  | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN);
+    }
 
+    if (Build.VERSION.SDK_INT >= 29) {
       platformPlugin.mPlatformMessageHandler.showSystemUiMode(
           PlatformChannel.SystemUiMode.EDGE_TO_EDGE);
-      assertEquals(
-          View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-              | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
-              | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN,
-          fakeActivity.getWindow().getDecorView().getSystemUiVisibility());
+      verify(fakeDecorView, times(4))
+          .setSystemUiVisibility(
+              View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                  | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                  | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN);
     }
+  }
+
+  @TargetApi(30)
+  @Test
+  public void setSystemUiMode() {
+    View fakeDecorView = mock(View.class);
+    Window fakeWindow = mock(Window.class);
+    when(fakeWindow.getDecorView()).thenReturn(fakeDecorView);
+    Activity fakeActivity = mock(Activity.class);
+    when(fakeActivity.getWindow()).thenReturn(fakeWindow);
+    PlatformChannel fakePlatformChannel = mock(PlatformChannel.class);
+    PlatformPlugin platformPlugin = new PlatformPlugin(fakeActivity, fakePlatformChannel);
+    WindowInsetsController fakeWindowInsetsController = mock(WindowInsetsController.class);
+    when(fakeWindow.getInsetsController()).thenReturn(fakeWindowInsetsController);
+
+    platformPlugin.mPlatformMessageHandler.showSystemUiMode(PlatformChannel.SystemUiMode.LEAN_BACK);
+
+    verify(fakeWindowInsetsController)
+        .setSystemBarsBehavior(WindowInsetsControllerCompat.BEHAVIOR_SHOW_BARS_BY_TOUCH);
+    verify(fakeWindowInsetsController).hide(WindowInsetsCompat.Type.systemBars());
+    verify(fakeWindow).setDecorFitsSystemWindows(false);
+
+    platformPlugin.mPlatformMessageHandler.showSystemUiMode(PlatformChannel.SystemUiMode.IMMERSIVE);
+
+    verify(fakeWindowInsetsController)
+        .setSystemBarsBehavior(WindowInsetsControllerCompat.BEHAVIOR_SHOW_BARS_BY_SWIPE);
+    verify(fakeWindowInsetsController, times(2)).hide(WindowInsetsCompat.Type.systemBars());
+    verify(fakeWindow, times(2)).setDecorFitsSystemWindows(false);
+
+    platformPlugin.mPlatformMessageHandler.showSystemUiMode(
+        PlatformChannel.SystemUiMode.IMMERSIVE_STICKY);
+
+    verify(fakeWindowInsetsController)
+        .setSystemBarsBehavior(WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+    verify(fakeWindowInsetsController, times(3)).hide(WindowInsetsCompat.Type.systemBars());
+    verify(fakeWindow, times(3)).setDecorFitsSystemWindows(false);
+
+    platformPlugin.mPlatformMessageHandler.showSystemUiMode(
+        PlatformChannel.SystemUiMode.EDGE_TO_EDGE);
+
+    verify(fakeWindow, times(4)).setDecorFitsSystemWindows(false);
+  }
+
+  @Config(sdk = 29)
+  @Test
+  public void showSystemOverlaysLegacy() {
+    // This test reflects the behavior under the hood of the Android overlay/inset APIs used for API
+    // 20-29 in the plugin.
+    View fakeDecorView = mock(View.class);
+    Window fakeWindow = mock(Window.class);
+    when(fakeWindow.getDecorView()).thenReturn(fakeDecorView);
+    int fakeSetFlags =
+        View.SYSTEM_UI_FLAG_FULLSCREEN
+            | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+            | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+            | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+            | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN;
+    Activity fakeActivity = mock(Activity.class);
+    when(fakeActivity.getWindow()).thenReturn(fakeWindow);
+    PlatformChannel fakePlatformChannel = mock(PlatformChannel.class);
+    PlatformPlugin platformPlugin = new PlatformPlugin(fakeActivity, fakePlatformChannel);
+
+    platformPlugin.mPlatformMessageHandler.showSystemOverlays(
+        new ArrayList<PlatformChannel.SystemUiOverlay>());
+
+    verify(fakeDecorView).setSystemUiVisibility(View.SYSTEM_UI_FLAG_FULLSCREEN);
+    verify(fakeDecorView).setSystemUiVisibility(View.SYSTEM_UI_FLAG_HIDE_NAVIGATION);
+    verify(fakeDecorView)
+        .setSystemUiVisibility(
+            View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN);
+
+    verify(fakeDecorView).setSystemUiVisibility(View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
+    verify(fakeDecorView).setSystemUiVisibility(View.SYSTEM_UI_FLAG_FULLSCREEN);
+    verify(fakeDecorView).setSystemUiVisibility(View.SYSTEM_UI_FLAG_HIDE_NAVIGATION);
+    verify(fakeDecorView)
+        .setSystemUiVisibility(
+            View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN);
+
+    when(fakeDecorView.getSystemUiVisibility()).thenReturn(fakeSetFlags);
+    platformPlugin.mPlatformMessageHandler.showSystemOverlays(
+        new ArrayList<PlatformChannel.SystemUiOverlay>(
+            Arrays.asList(
+                PlatformChannel.SystemUiOverlay.TOP_OVERLAYS,
+                PlatformChannel.SystemUiOverlay.BOTTOM_OVERLAYS)));
+
+    verify(fakeDecorView).setSystemUiVisibility(View.SYSTEM_UI_FLAG_FULLSCREEN);
+    verify(fakeDecorView).setSystemUiVisibility(View.SYSTEM_UI_FLAG_HIDE_NAVIGATION);
+    verify(fakeDecorView)
+        .setSystemUiVisibility(
+            View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN);
+
+    verify(fakeDecorView).setSystemUiVisibility(fakeSetFlags &= ~View.SYSTEM_UI_FLAG_FULLSCREEN);
+    verify(fakeDecorView)
+        .setSystemUiVisibility(fakeSetFlags &= ~View.SYSTEM_UI_FLAG_HIDE_NAVIGATION);
+  }
+
+  @TargetApi(30)
+  @Test
+  public void showSystemOverlays() {
+    View fakeDecorView = mock(View.class);
+    Window fakeWindow = mock(Window.class);
+    when(fakeWindow.getDecorView()).thenReturn(fakeDecorView);
+    Activity fakeActivity = mock(Activity.class);
+    when(fakeActivity.getWindow()).thenReturn(fakeWindow);
+    PlatformChannel fakePlatformChannel = mock(PlatformChannel.class);
+    PlatformPlugin platformPlugin = new PlatformPlugin(fakeActivity, fakePlatformChannel);
+    WindowInsetsController fakeWindowInsetsController = mock(WindowInsetsController.class);
+    when(fakeWindow.getInsetsController()).thenReturn(fakeWindowInsetsController);
+
+    platformPlugin.mPlatformMessageHandler.showSystemOverlays(
+        new ArrayList<PlatformChannel.SystemUiOverlay>());
+
+    verify(fakeWindowInsetsController)
+        .setSystemBarsBehavior(WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+    verify(fakeWindowInsetsController).hide(WindowInsetsCompat.Type.systemBars());
+
+    platformPlugin.mPlatformMessageHandler.showSystemOverlays(
+        new ArrayList<PlatformChannel.SystemUiOverlay>(
+            Arrays.asList(
+                PlatformChannel.SystemUiOverlay.TOP_OVERLAYS,
+                PlatformChannel.SystemUiOverlay.BOTTOM_OVERLAYS)));
+
+    verify(fakeWindowInsetsController).show(WindowInsetsCompat.Type.statusBars());
+    verify(fakeWindowInsetsController).show(WindowInsetsCompat.Type.navigationBars());
+  }
+
+  @Config(sdk = 30)
+  @Test
+  public void verifyUpdateSystemUiOverlaysAppliesCurrentTheme() {
+    View fakeDecorView = mock(View.class);
+    Window fakeWindow = mock(Window.class);
+    when(fakeWindow.getDecorView()).thenReturn(fakeDecorView);
+    Activity fakeActivity = mock(Activity.class);
+    when(fakeActivity.getWindow()).thenReturn(fakeWindow);
+    PlatformChannel fakePlatformChannel = mock(PlatformChannel.class);
+    PlatformPlugin platformPlugin = new PlatformPlugin(fakeActivity, fakePlatformChannel);
+    WindowInsetsController fakeWindowInsetsController = mock(WindowInsetsController.class);
+    when(fakeWindow.getInsetsController()).thenReturn(fakeWindowInsetsController);
+
+    // Style that requires usage of all system bar APIs used in PlatformPlugin to update overlay
+    // style
+    SystemChromeStyle testStyle =
+        new SystemChromeStyle(
+            0XFF000000, Brightness.LIGHT, true, 0XFFC70039, Brightness.LIGHT, 0XFF006DB3, true);
+
+    platformPlugin.updateSystemUiOverlays();
+
+    verify(fakeWindow, never()).setStatusBarColor(anyInt());
+    verify(fakeWindow, never()).setNavigationBarColor(anyInt());
+    verify(fakeWindow, never()).setNavigationBarDividerColor(anyInt());
+    verify(fakeWindow, never()).setStatusBarContrastEnforced(anyBoolean());
+    verify(fakeWindow, never()).setNavigationBarContrastEnforced(anyBoolean());
+
+    platformPlugin.mPlatformMessageHandler.setSystemUiOverlayStyle(testStyle);
+    platformPlugin.updateSystemUiOverlays();
+
+    verify(fakeWindow, times(2)).setStatusBarColor(0xFF000000);
+    verify(fakeWindow, times(2)).setNavigationBarColor(0XFFC70039);
+    verify(fakeWindow, times(2)).setNavigationBarDividerColor(0XFF006DB3);
+    verify(fakeWindow, times(2)).setStatusBarContrastEnforced(true);
+    verify(fakeWindow, times(2)).setNavigationBarContrastEnforced(true);
+  }
+
+  @Config(sdk = 28)
+  @Test
+  public void doNotEnableEdgeToEdgeOnOlderSdk() {
+    View fakeDecorView = mock(View.class);
+    Window fakeWindow = mock(Window.class);
+    when(fakeWindow.getDecorView()).thenReturn(fakeDecorView);
+    Activity fakeActivity = mock(Activity.class);
+    when(fakeActivity.getWindow()).thenReturn(fakeWindow);
+    PlatformChannel fakePlatformChannel = mock(PlatformChannel.class);
+    PlatformPlugin platformPlugin = new PlatformPlugin(fakeActivity, fakePlatformChannel);
+
+    platformPlugin.mPlatformMessageHandler.showSystemUiMode(
+        PlatformChannel.SystemUiMode.EDGE_TO_EDGE);
+    verify(fakeDecorView, never())
+        .setSystemUiVisibility(
+            View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN);
   }
 
   @Test
@@ -261,40 +597,44 @@ public class PlatformPluginTest {
 
   @Test
   public void popSystemNavigatorFlutterFragment() {
-    FragmentActivity mockFragmentActivity = mock(FragmentActivity.class);
-    OnBackPressedDispatcher onBackPressedDispatcher = mock(OnBackPressedDispatcher.class);
-    when(mockFragmentActivity.getOnBackPressedDispatcher()).thenReturn(onBackPressedDispatcher);
+    FragmentActivity activity = spy(Robolectric.setupActivity(FragmentActivity.class));
+    final AtomicBoolean onBackPressedCalled = new AtomicBoolean(false);
+    OnBackPressedCallback backCallback =
+        new OnBackPressedCallback(true) {
+          @Override
+          public void handleOnBackPressed() {
+            onBackPressedCalled.set(true);
+          }
+        };
+    activity.getOnBackPressedDispatcher().addCallback(backCallback);
+
     PlatformChannel mockPlatformChannel = mock(PlatformChannel.class);
     PlatformPluginDelegate mockPlatformPluginDelegate = mock(PlatformPluginDelegate.class);
     when(mockPlatformPluginDelegate.popSystemNavigator()).thenReturn(false);
     PlatformPlugin platformPlugin =
-        new PlatformPlugin(mockFragmentActivity, mockPlatformChannel, mockPlatformPluginDelegate);
+        new PlatformPlugin(activity, mockPlatformChannel, mockPlatformPluginDelegate);
 
     platformPlugin.mPlatformMessageHandler.popSystemNavigator();
 
-    verify(mockFragmentActivity, never()).finish();
+    verify(activity, never()).finish();
     verify(mockPlatformPluginDelegate, times(1)).popSystemNavigator();
-    verify(mockFragmentActivity, times(1)).getOnBackPressedDispatcher();
-    verify(onBackPressedDispatcher, times(1)).onBackPressed();
+    assertTrue(onBackPressedCalled.get());
   }
 
   @Test
   public void doesNotDoAnythingByDefaultIfFragmentPopSystemNavigatorOverridden() {
-    FragmentActivity mockFragmentActivity = mock(FragmentActivity.class);
-    OnBackPressedDispatcher onBackPressedDispatcher = mock(OnBackPressedDispatcher.class);
-    when(mockFragmentActivity.getOnBackPressedDispatcher()).thenReturn(onBackPressedDispatcher);
+    FragmentActivity activity = spy(Robolectric.setupActivity(FragmentActivity.class));
     PlatformChannel mockPlatformChannel = mock(PlatformChannel.class);
     PlatformPluginDelegate mockPlatformPluginDelegate = mock(PlatformPluginDelegate.class);
     when(mockPlatformPluginDelegate.popSystemNavigator()).thenReturn(true);
     PlatformPlugin platformPlugin =
-        new PlatformPlugin(mockFragmentActivity, mockPlatformChannel, mockPlatformPluginDelegate);
+        new PlatformPlugin(activity, mockPlatformChannel, mockPlatformPluginDelegate);
 
     platformPlugin.mPlatformMessageHandler.popSystemNavigator();
 
     verify(mockPlatformPluginDelegate, times(1)).popSystemNavigator();
     // No longer perform the default action when overridden.
-    verify(mockFragmentActivity, never()).finish();
-    verify(mockFragmentActivity, never()).getOnBackPressedDispatcher();
+    verify(activity, never()).finish();
   }
 
   @Test

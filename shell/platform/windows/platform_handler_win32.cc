@@ -10,8 +10,10 @@
 #include <iostream>
 #include <optional>
 
+#include "flutter/fml/platform/win/wstring_conversion.h"
 #include "flutter/shell/platform/windows/flutter_windows_view.h"
-#include "flutter/shell/platform/windows/string_conversion.h"
+
+static constexpr char kValueKey[] = "value";
 
 namespace flutter {
 
@@ -225,7 +227,26 @@ void PlatformHandlerWin32::GetPlainText(
   rapidjson::Document::AllocatorType& allocator = document.GetAllocator();
   document.AddMember(
       rapidjson::Value(key.data(), allocator),
-      rapidjson::Value(Utf8FromUtf16(*clipboard_string), allocator), allocator);
+      rapidjson::Value(fml::WideStringToUtf8(*clipboard_string), allocator),
+      allocator);
+  result->Success(document);
+}
+
+void PlatformHandlerWin32::GetHasStrings(
+    std::unique_ptr<MethodResult<rapidjson::Document>> result) {
+  ScopedClipboard clipboard;
+  if (!clipboard.Open(std::get<HWND>(*view_->GetRenderTarget()))) {
+    rapidjson::Document error_code;
+    error_code.SetInt(::GetLastError());
+    result->Error(kClipboardError, "Unable to open clipboard", error_code);
+    return;
+  }
+
+  rapidjson::Document document;
+  document.SetObject();
+  rapidjson::Document::AllocatorType& allocator = document.GetAllocator();
+  document.AddMember(rapidjson::Value(kValueKey, allocator),
+                     rapidjson::Value(clipboard.HasString()), allocator);
   result->Success(document);
 }
 
@@ -239,7 +260,7 @@ void PlatformHandlerWin32::SetPlainText(
     result->Error(kClipboardError, "Unable to open clipboard", error_code);
     return;
   }
-  if (!clipboard.SetString(Utf16FromUtf8(text))) {
+  if (!clipboard.SetString(fml::Utf8ToWideString(text))) {
     rapidjson::Document error_code;
     error_code.SetInt(::GetLastError());
     result->Error(kClipboardError, "Unable to set clipboard data", error_code);

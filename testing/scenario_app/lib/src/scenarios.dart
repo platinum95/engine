@@ -11,7 +11,6 @@ import 'locale_initialization.dart';
 import 'platform_view.dart';
 import 'poppable_screen.dart';
 import 'scenario.dart';
-import 'send_text_focus_semantics.dart';
 import 'touches_scenario.dart';
 
 typedef ScenarioFactory = Scenario Function(); // ignore: public_member_api_docs
@@ -33,6 +32,8 @@ Map<String, ScenarioFactory> _scenarios = <String, ScenarioFactory>{
   'platform_view_clippath': () => PlatformViewClipPathScenario(PlatformDispatcher.instance, 'PlatformViewClipPath', id: _viewId++),
   'platform_view_transform': () => PlatformViewTransformScenario(PlatformDispatcher.instance, 'PlatformViewTransform', id: _viewId++),
   'platform_view_opacity': () => PlatformViewOpacityScenario(PlatformDispatcher.instance, 'PlatformViewOpacity', id: _viewId++),
+  'platform_view_with_other_backdrop_filter': () => PlatformViewWithOtherBackDropFilter(PlatformDispatcher.instance, 'PlatformViewWithOtherBackDropFilter', id: _viewId++),
+  'two_platform_views_with_other_backdrop_filter': () => TwoPlatformViewsWithOtherBackDropFilter(PlatformDispatcher.instance, firstId: _viewId++, secondId: _viewId++),
   'platform_view_multiple': () => MultiPlatformViewScenario(PlatformDispatcher.instance, firstId: 6, secondId: _viewId++),
   'platform_view_multiple_background_foreground': () => MultiPlatformViewBackgroundForegroundScenario(PlatformDispatcher.instance, firstId: _viewId++, secondId: _viewId++),
   'non_full_screen_flutter_view_platform_view': () => NonFullScreenFlutterViewPlatformViewScenario(PlatformDispatcher.instance, 'Hello from Scenarios (Platform View)', id: _viewId++),
@@ -41,8 +42,8 @@ Map<String, ScenarioFactory> _scenarios = <String, ScenarioFactory>{
   'platform_view_gesture_reject_eager': () => PlatformViewForTouchIOSScenario(PlatformDispatcher.instance, 'platform view touch', id: _viewId++, accept: false),
   'platform_view_gesture_accept': () => PlatformViewForTouchIOSScenario(PlatformDispatcher.instance, 'platform view touch', id: _viewId++, accept: true),
   'platform_view_gesture_reject_after_touches_ended': () => PlatformViewForTouchIOSScenario(PlatformDispatcher.instance, 'platform view touch', id: _viewId++, accept: false, rejectUntilTouchesEnded: true),
+  'platform_view_scrolling_under_widget':()=>PlatformViewScrollingUnderWidget(PlatformDispatcher.instance, firstPlatformViewId: _viewId++, lastPlatformViewId: _viewId+=16),
   'tap_status_bar': () => TouchesScenario(PlatformDispatcher.instance),
-  'text_semantics_focus': () => SendTextFocusSemantics(PlatformDispatcher.instance),
   'initial_route_reply': () => InitialRouteReply(PlatformDispatcher.instance),
   'platform_view_with_continuous_texture': () => PlatformViewWithContinuousTexture(PlatformDispatcher.instance, 'Platform View', id: _viewId++),
   'bogus_font_text': () => BogusFontText(PlatformDispatcher.instance),

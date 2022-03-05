@@ -3,9 +3,9 @@
 # found in the LICENSE file.
 
 import("//flutter/build/dart/rules.gni")
-import("//flutter/testing/scenario_app/runtime_mode.gni")
+import("//flutter/testing/rules/runtime_mode.gni")
 
-dart_snapshot("scenario_app_snapshot") {
+flutter_snapshot("scenario_app_snapshot") {
   main_dart = "lib/main.dart"
   package_config = ".dart_tool/package_config.json"
 }

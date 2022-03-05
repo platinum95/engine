@@ -10,9 +10,13 @@
 
 namespace flutter {
 
-FlutterMetalCompositor::FlutterMetalCompositor(FlutterViewController* view_controller,
-                                               id<MTLDevice> mtl_device)
-    : FlutterCompositor(view_controller), mtl_device_(mtl_device) {}
+FlutterMetalCompositor::FlutterMetalCompositor(
+    FlutterViewController* view_controller,
+    FlutterPlatformViewController* platform_views_controller,
+    id<MTLDevice> mtl_device)
+    : FlutterCompositor(view_controller),
+      mtl_device_(mtl_device),
+      platform_views_controller_(platform_views_controller) {}
 
 bool FlutterMetalCompositor::CreateBackingStore(const FlutterBackingStoreConfig* config,
                                                 FlutterBackingStore* backing_store_out) {
@@ -76,6 +80,7 @@ bool FlutterMetalCompositor::CollectBackingStore(const FlutterBackingStore* back
 bool FlutterMetalCompositor::Present(const FlutterLayer** layers, size_t layers_count) {
   SetFrameStatus(FrameStatus::kPresenting);
 
+  bool has_flutter_content = false;
   for (size_t i = 0; i < layers_count; ++i) {
     const auto* layer = layers[i];
     FlutterBackingStore* backing_store = const_cast<FlutterBackingStore*>(layer->backing_store);
@@ -88,16 +93,36 @@ bool FlutterMetalCompositor::Present(const FlutterLayer** layers, size_t layers_
           IOSurfaceRef io_surface = [io_surface_holder ioSurface];
           InsertCALayerForIOSurface(io_surface);
         }
+        has_flutter_content = true;
         break;
       }
       case kFlutterLayerContentTypePlatformView:
-        // Add functionality in follow up PR.
-        FML_LOG(WARNING) << "Presenting PlatformViews not yet supported";
+        PresentPlatformView(layer, i);
         break;
     };
   }
 
-  return EndFrame();
+  return EndFrame(has_flutter_content);
+}
+
+void FlutterMetalCompositor::PresentPlatformView(const FlutterLayer* layer, size_t layer_position) {
+  // TODO (https://github.com/flutter/flutter/issues/96668)
+  // once the issue is fixed, this check will pass.
+  FML_DCHECK([[NSThread currentThread] isMainThread])
+      << "Must be on the main thread to present platform views";
+
+  int64_t platform_view_id = layer->platform_view->identifier;
+  NSView* platform_view = [platform_views_controller_ platformViewWithID:platform_view_id];
+
+  FML_DCHECK(platform_view) << "Platform view not found for id: " << platform_view_id;
+
+  CGFloat scale = [[NSScreen mainScreen] backingScaleFactor];
+  platform_view.frame = CGRectMake(layer->offset.x / scale, layer->offset.y / scale,
+                                   layer->size.width / scale, layer->size.height / scale);
+  if (platform_view.superview == nil) {
+    [view_controller_.flutterView addSubview:platform_view];
+  }
+  platform_view.layer.zPosition = layer_position;
 }
 
 }  // namespace flutter

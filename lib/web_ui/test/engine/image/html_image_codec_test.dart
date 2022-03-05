@@ -7,15 +7,16 @@ import 'dart:typed_data';
 
 import 'package:test/bootstrap/browser.dart';
 import 'package:test/test.dart';
-import 'package:ui/ui.dart' as ui;
 import 'package:ui/src/engine/html_image_codec.dart';
+import 'package:ui/src/engine/test_embedding.dart';
+import 'package:ui/ui.dart' as ui;
 
 void main() {
   internalBootstrapBrowserTest(() => testMain);
 }
 
-void testMain() async {
-  await ui.webOnlyInitializeTestDomRenderer();
+Future<void> testMain() async {
+  await initializeTestFlutterViewEmbedder();
   group('HtmCodec', () {
     test('supports raw images - RGBA8888', () async {
       final Completer<ui.Image> completer = Completer<ui.Image>();
@@ -71,7 +72,7 @@ void testMain() async {
       expect(frameInfo.image.debugDisposed, isTrue);
     });
     test('provides image loading progress', () async {
-      StringBuffer buffer = new StringBuffer();
+      final StringBuffer buffer = StringBuffer();
       final HtmlCodec codec = HtmlCodec('sample_image1.png',
           chunkCallback: (int loaded, int total) {
         buffer.write('$loaded/$total,');
@@ -109,7 +110,7 @@ void testMain() async {
     });
     test('provides image loading progress from web', () async {
       final Uri uri = Uri.base.resolve('sample_image1.png');
-      StringBuffer buffer = new StringBuffer();
+      final StringBuffer buffer = StringBuffer();
       final HtmlCodec codec = await ui.webOnlyInstantiateImageCodecFromUrl(uri,
           chunkCallback: (int loaded, int total) {
         buffer.write('$loaded/$total,');

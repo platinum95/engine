@@ -8,7 +8,12 @@
 
 #include <sstream>
 
-#include "flutter/shell/platform/windows/string_conversion.h"
+#include "third_party/cppwinrt/generated/winrt/Windows.Foundation.Collections.h"
+#include "third_party/cppwinrt/generated/winrt/Windows.System.UserProfile.h"
+#include "third_party/cppwinrt/generated/winrt/Windows.UI.ViewManagement.h"
+#include "third_party/cppwinrt/generated/winrt/Windows.UI.h"
+
+#include "flutter/fml/platform/win/wstring_conversion.h"
 
 namespace flutter {
 
@@ -23,12 +28,11 @@ std::vector<LanguageInfo> GetPreferredLanguageInfo() {
 
 std::vector<std::wstring> GetPreferredLanguages() {
   std::vector<std::wstring> languages;
-  // TODO(clarkezone) need to implement a complete version of this function in
-  // order to get full list of platform languages
-  // https://github.com/flutter/flutter/issues/74156
-  languages.push_back(L"en-US");
-  languages.push_back(L"en");
-
+  auto platform_languages = winrt::Windows::System::UserProfile::
+      GlobalizationPreferences::Languages();
+  for (const auto& platform_language : platform_languages) {
+    languages.push_back(std::wstring{platform_language});
+  }
   return languages;
 }
 
@@ -37,7 +41,7 @@ LanguageInfo ParseLanguageName(std::wstring language_name) {
 
   // Split by '-', discarding any suplemental language info (-x-foo).
   std::vector<std::string> components;
-  std::istringstream stream(Utf8FromUtf16(language_name));
+  std::istringstream stream(fml::WideStringToUtf8(language_name));
   std::string component;
   while (getline(stream, component, '-')) {
     if (component == "x") {
@@ -76,6 +80,18 @@ std::wstring GetUserTimeFormat() {
 
 bool Prefer24HourTime(std::wstring time_format) {
   return time_format.find(L"H") != std::wstring::npos;
+}
+
+std::wstring GetPreferredBrightness() {
+  winrt::Windows::UI::ViewManagement::UISettings ui_settings;
+  auto background_color = ui_settings.GetColorValue(
+      winrt::Windows::UI::ViewManagement::UIColorType::Background);
+  // Assuming that Windows return `Colors::Black` when being dark theme.
+  if (background_color == winrt::Windows::UI::Colors::Black()) {
+    return kPlatformBrightnessDark;
+  } else {
+    return kPlatformBrightnessLight;
+  }
 }
 
 }  // namespace flutter

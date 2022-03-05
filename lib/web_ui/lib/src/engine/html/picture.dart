@@ -8,7 +8,6 @@ import 'dart:typed_data';
 
 import 'package:ui/ui.dart' as ui;
 
-import '../dom_renderer.dart';
 import '../engine_canvas.dart';
 import '../frame_reference.dart';
 import '../picture.dart';
@@ -18,7 +17,6 @@ import 'bitmap_canvas.dart';
 import 'debug_canvas_reuse_overlay.dart';
 import 'dom_canvas.dart';
 import 'path/path_metrics.dart';
-import 'shader_mask.dart';
 import 'surface.dart';
 import 'surface_stats.dart';
 
@@ -128,11 +126,12 @@ class PersistedPicture extends PersistedLeafSurface {
   }
 
   @override
-  void preroll() {
-    if (PersistedShaderMask.activeShaderMaskCount != 0) {
-      picture.recordingCanvas?.renderStrategy.isInsideShaderMask = true;
+  void preroll(PrerollSurfaceContext prerollContext) {
+    if (prerollContext.activeShaderMaskCount != 0 ||
+        prerollContext.activeColorFilterCount != 0) {
+      picture.recordingCanvas?.renderStrategy.isInsideSvgFilterTree = true;
     }
-    super.preroll();
+    super.preroll(prerollContext);
   }
 
   @override
@@ -333,7 +332,7 @@ class PersistedPicture extends PersistedLeafSurface {
       return 0;
     }
 
-    final BitmapCanvas bitmapCanvas = _canvas as BitmapCanvas;
+    final BitmapCanvas bitmapCanvas = _canvas! as BitmapCanvas;
     return bitmapCanvas.bitmapPixelCount;
   }
 
@@ -350,7 +349,7 @@ class PersistedPicture extends PersistedLeafSurface {
         oldSurface._canvas = null;
       }
       if (rootElement != null) {
-        domRenderer.clearDom(rootElement!);
+        removeAllChildren(rootElement!);
       }
       if (_canvas != null && _canvas != oldCanvas) {
         _recycleCanvas(_canvas);
@@ -432,7 +431,7 @@ class PersistedPicture extends PersistedLeafSurface {
     _recycleCanvas(_canvas);
     final DomCanvas domCanvas = DomCanvas(rootElement!);
     _canvas = domCanvas;
-    domRenderer.clearDom(rootElement!);
+    removeAllChildren(rootElement!);
     picture.recordingCanvas!.apply(domCanvas, _optimalLocalCullRect!);
   }
 
@@ -455,7 +454,7 @@ class PersistedPicture extends PersistedLeafSurface {
       // it in a cache for later reuse.
       _recycleCanvas(oldCanvas);
       if (_canvas is BitmapCanvas) {
-        (_canvas as BitmapCanvas).setElementCache(null);
+        (_canvas! as BitmapCanvas).setElementCache(null);
       }
       _canvas = null;
       // We cannot paint immediately because not all canvases that we may be
@@ -473,7 +472,7 @@ class PersistedPicture extends PersistedLeafSurface {
             surfaceStatsFor(this).paintPixelCount +=
                 bitmapCanvas.bitmapPixelCount;
           }
-          domRenderer.clearDom(rootElement!);
+          removeAllChildren(rootElement!);
           rootElement!.append(bitmapCanvas.rootElement);
           bitmapCanvas.clear();
           picture.recordingCanvas!.apply(bitmapCanvas, _optimalLocalCullRect!);
@@ -594,8 +593,8 @@ class PersistedPicture extends PersistedLeafSurface {
 
     _computeOptimalCullRect(oldSurface);
     if (identical(picture, oldSurface.picture)) {
-      bool densityChanged = (_canvas is BitmapCanvas &&
-          _density != (_canvas as BitmapCanvas).density);
+      final bool densityChanged = _canvas is BitmapCanvas &&
+          _density != (_canvas! as BitmapCanvas).density;
 
       // The picture is the same. Attempt to avoid repaint.
       if (_requiresRepaint || densityChanged) {
@@ -632,9 +631,9 @@ class PersistedPicture extends PersistedLeafSurface {
   void debugPrintChildren(StringBuffer buffer, int indent) {
     super.debugPrintChildren(buffer, indent);
     if (rootElement != null && rootElement!.firstChild != null) {
-      final html.Element firstChild = rootElement!.firstChild as html.Element;
+      final html.Element firstChild = rootElement!.firstChild! as html.Element;
       final String canvasTag = firstChild.tagName.toLowerCase();
-      final int canvasHash = rootElement!.firstChild!.hashCode;
+      final int canvasHash = firstChild.hashCode;
       buffer.writeln('${'  ' * (indent + 1)}<$canvasTag @$canvasHash />');
     } else if (rootElement != null) {
       buffer.writeln(
@@ -705,8 +704,8 @@ double _computePixelDensity(Matrix4? transform, double width, double height) {
   maxX = math.max(maxX, xp);
   minY = math.min(minY, yp);
   maxY = math.max(maxY, yp);
-  double scaleX = (maxX - minX) / width;
-  double scaleY = (maxY - minY) / height;
+  final double scaleX = (maxX - minX) / width;
+  final double scaleY = (maxY - minY) / height;
   double scale = math.min(scaleX, scaleY);
   // kEpsilon guards against divide by zero below.
   if (scale < kEpsilon || scale == 1) {
@@ -720,7 +719,7 @@ double _computePixelDensity(Matrix4? transform, double width, double height) {
     //
     // On a fullscreen high dpi device dpi*density*resolution will demand
     // too much memory, so clamp at 4.
-    scale = math.min(4.0, ((scale / 2.0).ceil() * 2.0));
+    scale = math.min(4.0, (scale / 2.0).ceil() * 2.0);
     // Guard against webkit absolute limit.
     const double kPixelLimit = 1024 * 1024 * 4;
     if ((width * height * scale * scale) > kPixelLimit && scale > 2) {

@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 #
 # Copyright 2013 The Flutter Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
@@ -35,7 +35,7 @@ def IsMac():
 
 def GetFuchsiaSDKPath():
   # host_os references the gn host_os
-  # https://gn.googlesource.com/gn/+/master/docs/reference.md#var_host_os
+  # https://gn.googlesource.com/gn/+/main/docs/reference.md#var_host_os
   host_os = ''
   if IsLinux():
     host_os = 'linux'
@@ -125,8 +125,12 @@ def CopyFlutterTesterBinIfExists(source, destination):
   destination_base = os.path.join(destination, 'flutter_binaries')
   FindFileAndCopyTo('flutter_tester', source_root, destination_base)
 
+def CopyZirconFFILibIfExists(source, destination):
+  source_root = os.path.join(_out_dir, source)
+  destination_base = os.path.join(destination, 'flutter_binaries')
+  FindFileAndCopyTo('libzircon_ffi.so', source_root, destination_base)
 
-def CopyToBucketWithMode(source, destination, aot, product, runner_type):
+def CopyToBucketWithMode(source, destination, aot, product, runner_type, api_level):
   mode = 'aot' if aot else 'jit'
   product_suff = '_product' if product else ''
   runner_name = '%s_%s%s_runner' % (runner_type, mode, product_suff)
@@ -138,7 +142,7 @@ def CopyToBucketWithMode(source, destination, aot, product, runner_type):
   key_path = os.path.join(_script_dir, 'development.key')
 
   destination = os.path.join(_bucket_directory, destination, mode)
-  CreateFarPackage(pm_bin, far_base, key_path, destination)
+  CreateFarPackage(pm_bin, far_base, key_path, destination, api_level)
   patched_sdk_dirname = '%s_runner_patched_sdk' % runner_type
   patched_sdk_dir = os.path.join(source_root, patched_sdk_dirname)
   dest_sdk_path = os.path.join(destination, patched_sdk_dirname)
@@ -146,13 +150,21 @@ def CopyToBucketWithMode(source, destination, aot, product, runner_type):
     CopyPath(patched_sdk_dir, dest_sdk_path)
   CopyGenSnapshotIfExists(source_root, destination)
   CopyFlutterTesterBinIfExists(source_root, destination)
+  CopyZirconFFILibIfExists(source_root, destination)
 
 
 def CopyToBucket(src, dst, product=False):
-  CopyToBucketWithMode(src, dst, False, product, 'flutter')
-  CopyToBucketWithMode(src, dst, True, product, 'flutter')
-  CopyToBucketWithMode(src, dst, False, product, 'dart')
-  CopyToBucketWithMode(src, dst, True, product, 'dart')
+  api_level = ReadTargetAPILevel()
+  CopyToBucketWithMode(src, dst, False, product, 'flutter', api_level)
+  CopyToBucketWithMode(src, dst, True, product, 'flutter', api_level)
+  CopyToBucketWithMode(src, dst, False, product, 'dart', api_level)
+  CopyToBucketWithMode(src, dst, True, product, 'dart', api_level)
+
+def ReadTargetAPILevel():
+  filename = os.path.join(os.path.dirname(__file__), 'target_api_level')
+  with open(filename) as f:
+    api_level = f.read().rstrip('\n')
+  return api_level
 
 
 def CopyVulkanDepsToBucket(src, dst, arch):

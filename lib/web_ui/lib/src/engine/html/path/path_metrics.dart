@@ -3,8 +3,8 @@
 // found in the LICENSE file.
 
 import 'dart:collection' show IterableBase;
-import 'dart:typed_data';
 import 'dart:math' as math;
+import 'dart:typed_data';
 
 import 'package:ui/ui.dart' as ui;
 
@@ -44,19 +44,16 @@ class SurfacePathMetrics extends IterableBase<ui.PathMetric>
 
 /// Maintains a single instance of computed segments for set of PathMetric
 /// objects exposed through iterator.
-///
-/// [resScale] controls the precision of measure when values > 1.
 class _SurfacePathMeasure {
-  _SurfacePathMeasure(this._path, this.forceClosed, {this.resScale = 1.0})
+  _SurfacePathMeasure(this._path, this.forceClosed)
       :
         // nextContour will increment this to the zero based index.
         _currentContourIndex = -1,
         _pathIterator = PathIterator(_path, forceClosed);
 
-  final double resScale;
   final PathRef _path;
   PathIterator _pathIterator;
-  final List<_PathContourMeasure> _contours = [];
+  final List<_PathContourMeasure> _contours = <_PathContourMeasure>[];
 
   // If the contour ends with a call to [Path.close] (which may
   // have been implied when using [Path.addRect])
@@ -116,7 +113,7 @@ class _SurfacePathMeasure {
     if (_verbIterIndex == _path.countVerbs()) {
       return false;
     }
-    _PathContourMeasure measure =
+    final _PathContourMeasure measure =
         _PathContourMeasure(_path, _pathIterator, forceClosed);
     _verbIterIndex = measure.verbEndIndex;
     _contours.add(measure);
@@ -138,7 +135,7 @@ class _PathContourMeasure {
 
   final PathRef pathRef;
   int _verbEndIndex = 0;
-  final List<_PathSegment> _segments = [];
+  final List<_PathSegment> _segments = <_PathSegment>[];
   // Allocate buffer large enough for returning cubic curve chop result.
   // 2 floats for each coordinate x (start, end & control point 1 & 2).
   static final Float32List _buffer = Float32List(8);
@@ -152,7 +149,7 @@ class _PathContourMeasure {
   bool _isClosed = false;
 
   ui.Tangent? getTangentForOffset(double distance) {
-    final segmentIndex = _segmentIndexAtDistance(distance);
+    final int segmentIndex = _segmentIndexAtDistance(distance);
     if (segmentIndex == -1) {
       return null;
     }
@@ -178,7 +175,7 @@ class _PathContourMeasure {
     int lo = 0;
     int hi = _segments.length - 1;
     while (lo < hi) {
-      int mid = (lo + hi) >> 1;
+      final int mid = (lo + hi) >> 1;
       if (_segments[mid].distance < distance) {
         lo = mid + 1;
       } else {
@@ -192,7 +189,7 @@ class _PathContourMeasure {
   }
 
   _SurfaceTangent _getPosTan(int segmentIndex, double distance) {
-    _PathSegment segment = _segments[segmentIndex];
+    final _PathSegment segment = _segments[segmentIndex];
     // Compute distance to segment. Since distance is cumulative to find
     // t = 0..1 on the segment, we need to calculate start distance using prior
     // segment.
@@ -217,8 +214,8 @@ class _PathContourMeasure {
     if (startDistance > stopDistance || _segments.isEmpty) {
       return path;
     }
-    int startSegmentIndex = _segmentIndexAtDistance(startDistance);
-    int stopSegmentIndex = _segmentIndexAtDistance(stopDistance);
+    final int startSegmentIndex = _segmentIndexAtDistance(startDistance);
+    final int stopSegmentIndex = _segmentIndexAtDistance(stopDistance);
     if (startSegmentIndex == -1 || stopSegmentIndex == -1) {
       return path;
     }
@@ -287,8 +284,7 @@ class _PathContourMeasure {
     double distance = 0.0;
     bool haveSeenMoveTo = false;
 
-    final Function lineToHandler =
-        (double fromX, double fromY, double x, double y) {
+    void lineToHandler(double fromX, double fromY, double x, double y) {
       final double dx = fromX - x;
       final double dy = fromY - y;
       final double prevDistance = distance;
@@ -297,10 +293,12 @@ class _PathContourMeasure {
       // actually made it larger, since a very small delta might be > 0, but
       // still have no effect on distance (if distance >>> delta).
       if (distance > prevDistance) {
-        _segments
-            .add(_PathSegment(SPath.kLineVerb, distance, [fromX, fromY, x, y]));
+        _segments.add(
+          _PathSegment(SPath.kLineVerb, distance, <double>[fromX, fromY, x, y]),
+        );
       }
-    };
+    }
+
     int verb = 0;
     final Float32List points = Float32List(PathRefIterator.kMaxBufferSize);
     do {
@@ -336,9 +334,9 @@ class _PathContourMeasure {
         case SPath.kConicVerb:
           assert(haveSeenMoveTo);
           final double w = iter.conicWeight;
-          Conic conic = Conic(points[0], points[1], points[2], points[3],
+          final Conic conic = Conic(points[0], points[1], points[2], points[3],
               points[4], points[5], w);
-          List<ui.Offset> conicPoints = conic.toQuads();
+          final List<ui.Offset> conicPoints = conic.toQuads();
           final int len = conicPoints.length;
           double startX = conicPoints[0].dx;
           double startY = conicPoints[0].dy;
@@ -532,7 +530,7 @@ const double _fTolerance = 0.5;
 /// the path.
 ///
 /// Implementation is based on
-/// https://github.com/google/skia/blob/master/src/core/SkContourMeasure.cpp
+/// https://github.com/google/skia/blob/main/src/core/SkContourMeasure.cpp
 /// to maintain consistency with native platforms.
 class SurfacePathMetric implements ui.PathMetric {
   SurfacePathMetric._(this._measure)
@@ -550,6 +548,7 @@ class SurfacePathMetric implements ui.PathMetric {
   /// have been implied when using methods like [Path.addRect]) or if
   /// `forceClosed` was specified as true in the call to [Path.computeMetrics].
   /// Returns false otherwise.
+  @override
   final bool isClosed;
 
   /// The zero-based index of the contour.
@@ -564,6 +563,7 @@ class SurfacePathMetric implements ui.PathMetric {
   /// the contours of the path at the time the path's metrics were computed. If
   /// additional contours were added or existing contours updated, this metric
   /// will be invalid for the current state of the path.
+  @override
   final int contourIndex;
 
   final _SurfacePathMeasure _measure;
@@ -587,6 +587,7 @@ class SurfacePathMetric implements ui.PathMetric {
   ///
   /// `start` and `end` are pinned to legal values (0..[length])
   /// Begin the segment with a moveTo if `startWithMoveTo` is true.
+  @override
   ui.Path extractPath(double start, double end, {bool startWithMoveTo = true}) {
     return _measure.extractPath(contourIndex, start, end,
         startWithMoveTo: startWithMoveTo);
@@ -600,7 +601,7 @@ class SurfacePathMetric implements ui.PathMetric {
 ui.Offset _normalizeSlope(double dx, double dy) {
   final double length = math.sqrt(dx * dx + dy * dy);
   return length < kEpsilon
-      ? ui.Offset(0.0, 0.0)
+      ? const ui.Offset(0.0, 0.0)
       : ui.Offset(dx / length, dy / length);
 }
 

@@ -15,4 +15,8 @@ AndroidSurface::AndroidSurface(
 
 AndroidSurface::~AndroidSurface() = default;
 
+std::unique_ptr<Surface> AndroidSurface::CreateSnapshotSurface() {
+  return nullptr;
+}
+
 }  // namespace flutter

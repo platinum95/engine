@@ -8,27 +8,25 @@ import 'dart:typed_data';
 
 import 'package:ui/ui.dart' as ui;
 
-import '../../engine.dart' show NullTreeSanitizer;
 import '../browser_detection.dart';
 import '../canvas_pool.dart';
 import '../canvaskit/color_filter.dart';
 import '../color_filter.dart';
-import '../dom_renderer.dart';
 import '../engine_canvas.dart';
 import '../frame_reference.dart';
 import '../html_image_codec.dart';
 import '../platform_dispatcher.dart';
-import '../text/paragraph.dart';
+import '../text/canvas_paragraph.dart';
 import '../util.dart';
 import '../vector_math.dart';
 import '../window.dart';
 import 'clip.dart';
 import 'color_filter.dart';
 import 'dom_canvas.dart';
-import 'recording_canvas.dart';
-import 'render_vertices.dart';
 import 'painting.dart';
 import 'path/path.dart';
+import 'recording_canvas.dart';
+import 'render_vertices.dart';
 import 'shaders/image_shader.dart';
 
 /// A raw HTML canvas that is directly written to.
@@ -68,7 +66,7 @@ class BitmapCanvas extends EngineCanvas {
 
   /// The last CSS font string is cached to optimize the case where the font
   /// styles hasn't changed.
-  String? _cachedLastCssFont = null;
+  String? _cachedLastCssFont;
 
   /// List of extra sibling elements created for paragraphs and clipping.
   final List<html.Element> _children = <html.Element>[];
@@ -105,7 +103,7 @@ class BitmapCanvas extends EngineCanvas {
 
   // Indicates the instructions following drawImage or drawParagraph that
   // a child element was created to paint.
-  // TODO(flutter_web): When childElements are created by
+  // TODO(yjbanov): When childElements are created by
   // drawImage/drawParagraph commands, compositing order is not correctly
   // handled when we interleave these with other paint commands.
   // To solve this, recording canvas will have to check the paint queue
@@ -160,13 +158,13 @@ class BitmapCanvas extends EngineCanvas {
     _canvasPositionX = _bounds.left.floor() - kPaddingPixels;
     _canvasPositionY = _bounds.top.floor() - kPaddingPixels;
     _updateRootElementTransform();
-    _canvasPool.allocateCanvas(rootElement as html.HtmlElement);
+    _canvasPool.mount(rootElement as html.HtmlElement);
     _setupInitialTransform();
   }
 
   /// Constructs bitmap canvas to capture image data.
   factory BitmapCanvas.imageData(ui.Rect bounds) {
-    BitmapCanvas bitmapCanvas = BitmapCanvas(bounds, RenderStrategy());
+    final BitmapCanvas bitmapCanvas = BitmapCanvas(bounds, RenderStrategy());
     bitmapCanvas._preserveImageData = true;
     return bitmapCanvas;
   }
@@ -183,7 +181,8 @@ class BitmapCanvas extends EngineCanvas {
     // initial translation so the paint operations are positioned as expected.
     //
     // The flooring of the value is to ensure that canvas' top-left corner
-    // lands on the physical pixel. TODO: !This is not accurate if there are
+    // lands on the physical pixel.
+    // TODO(yjbanov): !This is not accurate if there are
     // transforms higher up in the stack.
     rootElement.style.transform =
         'translate(${_canvasPositionX}px, ${_canvasPositionY}px)';
@@ -237,7 +236,7 @@ class BitmapCanvas extends EngineCanvas {
     _canvasPool.clear();
     final int len = _children.length;
     for (int i = 0; i < len; i++) {
-      html.Element child = _children[i];
+      final html.Element child = _children[i];
       // Don't remove children that have been reused by CrossFrameCache.
       if (child.parent == rootElement) {
         child.remove();
@@ -328,7 +327,7 @@ class BitmapCanvas extends EngineCanvas {
 
   @override
   void transform(Float32List matrix4) {
-    TransformKind transformKind = transformKindOf(matrix4);
+    final TransformKind transformKind = transformKindOf(matrix4);
     if (transformKind == TransformKind.complex) {
       _contains3dTransform = true;
     }
@@ -336,11 +335,11 @@ class BitmapCanvas extends EngineCanvas {
   }
 
   @override
-  void clipRect(ui.Rect rect, ui.ClipOp op) {
-    if (op == ui.ClipOp.difference) {
+  void clipRect(ui.Rect rect, ui.ClipOp clipOp) {
+    if (clipOp == ui.ClipOp.difference) {
       // Create 2 rectangles inside each other that represents
       // clip area difference using even-odd fill rule.
-      final SurfacePath path = new SurfacePath();
+      final SurfacePath path = SurfacePath();
       path.fillType = ui.PathFillType.evenOdd;
       path.addRect(ui.Rect.fromLTWH(0, 0, _bounds.width, _bounds.height));
       path.addRect(rect);
@@ -368,10 +367,10 @@ class BitmapCanvas extends EngineCanvas {
   ///   prefer DOM if canvas has not been allocated yet.
   ///
   bool _useDomForRenderingFill(SurfacePaintData paint) =>
-      _renderStrategy.isInsideShaderMask ||
+      _renderStrategy.isInsideSvgFilterTree ||
       (_preserveImageData == false && _contains3dTransform) ||
       (_childOverdraw &&
-          _canvasPool.canvas == null &&
+          _canvasPool.isEmpty &&
           paint.maskFilter == null &&
           paint.shader == null &&
           paint.style != ui.PaintingStyle.stroke);
@@ -380,12 +379,12 @@ class BitmapCanvas extends EngineCanvas {
   ///
   /// DOM canvas is generated for simple strokes using borders.
   bool _useDomForRenderingFillAndStroke(SurfacePaintData paint) =>
-      _renderStrategy.isInsideShaderMask ||
+      _renderStrategy.isInsideSvgFilterTree ||
       (_preserveImageData == false && _contains3dTransform) ||
       ((_childOverdraw ||
               _renderStrategy.hasImageElements ||
               _renderStrategy.hasParagraphs) &&
-          _canvasPool.canvas == null &&
+          _canvasPool.isEmpty &&
           paint.maskFilter == null &&
           paint.shader == null);
 
@@ -409,7 +408,7 @@ class BitmapCanvas extends EngineCanvas {
         ..lineTo(p2.dx, p2.dy);
       drawPath(path, paint);
     } else {
-      ui.Rect? shaderBounds =
+      final ui.Rect? shaderBounds =
           (paint.shader != null) ? ui.Rect.fromPoints(p1, p2) : null;
       setUpPaint(paint, shaderBounds);
       _canvasPool.strokeLine(p1, p2);
@@ -422,7 +421,7 @@ class BitmapCanvas extends EngineCanvas {
     if (_useDomForRenderingFill(paint)) {
       drawRect(_computeScreenBounds(_canvasPool.currentTransform), paint);
     } else {
-      ui.Rect? shaderBounds =
+      final ui.Rect? shaderBounds =
           (paint.shader != null) ? _computePictureBounds() : null;
       setUpPaint(paint, shaderBounds);
       _canvasPool.fill();
@@ -433,7 +432,7 @@ class BitmapCanvas extends EngineCanvas {
   @override
   void drawRect(ui.Rect rect, SurfacePaintData paint) {
     if (_useDomForRenderingFillAndStroke(paint)) {
-      html.HtmlElement element = buildDrawRectElement(
+      final html.HtmlElement element = buildDrawRectElement(
           rect, paint, 'draw-rect', _canvasPool.currentTransform);
       _drawElement(
           element,
@@ -457,7 +456,7 @@ class BitmapCanvas extends EngineCanvas {
           element,
           ui.Offset.zero,
           transformWithOffset(_canvasPool.currentTransform, offset));
-      for (html.Element clipElement in clipElements) {
+      for (final html.Element clipElement in clipElements) {
         rootElement.append(clipElement);
         _children.add(clipElement);
       }
@@ -465,9 +464,9 @@ class BitmapCanvas extends EngineCanvas {
       rootElement.append(element);
       _children.add(element);
     }
-    ui.BlendMode? blendMode = paint.blendMode;
+    final ui.BlendMode? blendMode = paint.blendMode;
     if (blendMode != null) {
-      element.style.mixBlendMode = stringForBlendMode(blendMode) ?? '';
+      element.style.mixBlendMode = blendModeToCssMixBlendMode(blendMode) ?? '';
     }
     // Switch to preferring DOM from now on, and close the current canvas.
     _closeCurrentCanvas();
@@ -477,7 +476,7 @@ class BitmapCanvas extends EngineCanvas {
   void drawRRect(ui.RRect rrect, SurfacePaintData paint) {
     final ui.Rect rect = rrect.outerRect;
     if (_useDomForRenderingFillAndStroke(paint)) {
-      html.HtmlElement element = buildDrawRectElement(
+      final html.HtmlElement element = buildDrawRectElement(
           rect, paint, 'draw-rrect', _canvasPool.currentTransform);
       applyRRectBorderRadius(element.style, rrect);
       _drawElement(
@@ -502,7 +501,7 @@ class BitmapCanvas extends EngineCanvas {
   @override
   void drawOval(ui.Rect rect, SurfacePaintData paint) {
     if (_useDomForRenderingFill(paint)) {
-      html.HtmlElement element = buildDrawRectElement(
+      final html.HtmlElement element = buildDrawRectElement(
           rect, paint, 'draw-oval', _canvasPool.currentTransform);
       _drawElement(
           element,
@@ -510,7 +509,7 @@ class BitmapCanvas extends EngineCanvas {
               math.min(rect.left, rect.right), math.min(rect.top, rect.bottom)),
           paint);
       element.style.borderRadius =
-          '${(rect.width / 2.0)}px / ${(rect.height / 2.0)}px';
+          '${rect.width / 2.0}px / ${rect.height / 2.0}px';
     } else {
       setUpPaint(paint, rect);
       _canvasPool.drawOval(rect, paint.style);
@@ -520,9 +519,9 @@ class BitmapCanvas extends EngineCanvas {
 
   @override
   void drawCircle(ui.Offset c, double radius, SurfacePaintData paint) {
-    ui.Rect rect = ui.Rect.fromCircle(center: c, radius: radius);
+    final ui.Rect rect = ui.Rect.fromCircle(center: c, radius: radius);
     if (_useDomForRenderingFillAndStroke(paint)) {
-      html.HtmlElement element = buildDrawRectElement(
+      final html.HtmlElement element = buildDrawRectElement(
           rect, paint, 'draw-circle', _canvasPool.currentTransform);
       _drawElement(
           element,
@@ -554,7 +553,7 @@ class BitmapCanvas extends EngineCanvas {
             : ui.Rect.fromLTWH(
                 pathAsLine.left, pathAsLine.top, 1, pathAsLine.height);
 
-        html.HtmlElement element = buildDrawRectElement(
+        final html.HtmlElement element = buildDrawRectElement(
             rect, paint, 'draw-rect', _canvasPool.currentTransform);
         _drawElement(
             element,
@@ -574,10 +573,10 @@ class BitmapCanvas extends EngineCanvas {
         return;
       }
       final ui.Rect pathBounds = surfacePath.getBounds();
-      html.Element svgElm = pathToSvgElement(
+      final html.Element svgElm = pathToSvgElement(
           surfacePath, paint, '${pathBounds.right}', '${pathBounds.bottom}');
       if (!_canvasPool.isClipped) {
-        html.CssStyleDeclaration style = svgElm.style;
+        final html.CssStyleDeclaration style = svgElm.style;
         style.position = 'absolute';
         if (!transform.isIdentity()) {
           style
@@ -586,7 +585,7 @@ class BitmapCanvas extends EngineCanvas {
         }
       }
       _applyFilter(svgElm, paint);
-      _drawElement(svgElm, ui.Offset(0, 0), paint);
+      _drawElement(svgElm, const ui.Offset(0, 0), paint);
     } else {
       setUpPaint(paint, paint.shader != null ? path.getBounds() : null);
       if (paint.style == null && paint.strokeWidth != null) {
@@ -601,7 +600,7 @@ class BitmapCanvas extends EngineCanvas {
   void _applyFilter(html.Element element, SurfacePaintData paint) {
     if (paint.maskFilter != null) {
       final bool isStroke = paint.style == ui.PaintingStyle.stroke;
-      String cssColor =
+      final String cssColor =
           paint.color == null ? '#000000' : colorToCssString(paint.color)!;
       final double sigma = paint.maskFilter!.webOnlySigma;
       if (browserEngine == BrowserEngine.webkit && !isStroke) {
@@ -633,14 +632,14 @@ class BitmapCanvas extends EngineCanvas {
   html.ImageElement _reuseOrCreateImage(HtmlImage htmlImage) {
     final String cacheKey = htmlImage.imgElement.src!;
     if (_elementCache != null) {
-      html.ImageElement? imageElement =
+      final html.ImageElement? imageElement =
           _elementCache!.reuse(cacheKey) as html.ImageElement?;
       if (imageElement != null) {
         return imageElement;
       }
     }
     // Can't reuse, create new instance.
-    html.ImageElement newImageElement = htmlImage.cloneImageElement();
+    final html.ImageElement newImageElement = htmlImage.cloneImageElement();
     if (_elementCache != null) {
       _elementCache!.cache(cacheKey, newImageElement, _onEvictElement);
     }
@@ -668,13 +667,13 @@ class BitmapCanvas extends EngineCanvas {
       // No Blending, create an image by cloning original loaded image.
       imgElement = _reuseOrCreateImage(htmlImage);
     }
-    imgElement.style.mixBlendMode = stringForBlendMode(blendMode) ?? '';
+    imgElement.style.mixBlendMode = blendModeToCssMixBlendMode(blendMode) ?? '';
     if (_canvasPool.isClipped) {
       // Reset width/height since they may have been previously set.
       imgElement.style..removeProperty('width')..removeProperty('height');
       final List<html.Element> clipElements = _clipContent(
           _canvasPool.clipStack!, imgElement, p, _canvasPool.currentTransform);
-      for (html.Element clipElement in clipElements) {
+      for (final html.Element clipElement in clipElements) {
         rootElement.append(clipElement);
         _children.add(clipElement);
       }
@@ -744,11 +743,11 @@ class BitmapCanvas extends EngineCanvas {
       double targetTop = dst.top;
       if (requiresClipping) {
         if (src.width != image.width) {
-          double leftMargin = -src.left * (dst.width / src.width);
+          final double leftMargin = -src.left * (dst.width / src.width);
           targetLeft += leftMargin;
         }
         if (src.height != image.height) {
-          double topMargin = -src.top * (dst.height / src.height);
+          final double topMargin = -src.top * (dst.height / src.height);
           targetTop += topMargin;
         }
       }
@@ -783,8 +782,8 @@ class BitmapCanvas extends EngineCanvas {
       // left,top are set to 0 (although position is absolute) because
       // Chrome will glitch if you leave them out, reproducible with
       // canvas_image_blend_test on row 6,  MacOS / Chrome 81.04.
-      ..left = "0px"
-      ..top = "0px"
+      ..left = '0px'
+      ..top = '0px'
       ..width = widthPx
       ..height = heightPx;
     if (imageElement is! html.ImageElement) {
@@ -836,7 +835,7 @@ class BitmapCanvas extends EngineCanvas {
         style
           ..position = 'absolute'
           ..backgroundImage = "url('${image.imgElement.src}')"
-          ..backgroundBlendMode = stringForBlendMode(colorFilterBlendMode) ?? ''
+          ..backgroundBlendMode = blendModeToCssMixBlendMode(colorFilterBlendMode) ?? ''
           ..backgroundColor = colorToCssString(filterColor);
         break;
     }
@@ -850,14 +849,11 @@ class BitmapCanvas extends EngineCanvas {
       ui.BlendMode colorFilterBlendMode,
       SurfacePaintData paint) {
     // For srcIn blendMode, we use an svg filter to apply to image element.
-    String? svgFilter =
-        svgFilterFromBlendMode(filterColor, colorFilterBlendMode);
-    final html.Element filterElement =
-        html.Element.html(svgFilter, treeSanitizer: NullTreeSanitizer());
-    rootElement.append(filterElement);
-    _children.add(filterElement);
+    final SvgFilter svgFilter = svgFilterFromBlendMode(filterColor, colorFilterBlendMode);
+    rootElement.append(svgFilter.element);
+    _children.add(svgFilter.element);
     final html.HtmlElement imgElement = _reuseOrCreateImage(image);
-    imgElement.style.filter = 'url(#_fcf${filterIdCounter})';
+    imgElement.style.filter = 'url(#${svgFilter.id})';
     if (colorFilterBlendMode == ui.BlendMode.saturation) {
       imgElement.style.backgroundColor = colorToCssString(filterColor);
     }
@@ -868,13 +864,11 @@ class BitmapCanvas extends EngineCanvas {
   html.HtmlElement _createImageElementWithSvgColorMatrixFilter(
       HtmlImage image, List<double> matrix, SurfacePaintData paint) {
     // For srcIn blendMode, we use an svg filter to apply to image element.
-    String? svgFilter = svgFilterFromColorMatrix(matrix);
-    final html.Element filterElement =
-        html.Element.html(svgFilter, treeSanitizer: NullTreeSanitizer());
-    rootElement.append(filterElement);
-    _children.add(filterElement);
+    final SvgFilter svgFilter = svgFilterFromColorMatrix(matrix);
+    rootElement.append(svgFilter.element);
+    _children.add(svgFilter.element);
     final html.HtmlElement imgElement = _reuseOrCreateImage(image);
-    imgElement.style.filter = 'url(#_fcf${filterIdCounter})';
+    imgElement.style.filter = 'url(#${svgFilter.id})';
     return imgElement;
   }
 
@@ -896,7 +890,7 @@ class BitmapCanvas extends EngineCanvas {
 
   void setCssFont(String cssFont) {
     if (cssFont != _cachedLastCssFont) {
-      html.CanvasRenderingContext2D ctx = _canvasPool.context;
+      final html.CanvasRenderingContext2D ctx = _canvasPool.context;
       ctx.font = cssFont;
       _cachedLastCssFont = cssFont;
     }
@@ -915,7 +909,7 @@ class BitmapCanvas extends EngineCanvas {
   ///
   /// The text is drawn starting at coordinates ([x], [y]). It uses the current
   /// font set by the most recent call to [setCssFont].
-  void fillText(String text, double x, double y, {List<ui.Shadow>? shadows}) {
+  void drawText(String text, double x, double y, {ui.PaintingStyle? style, List<ui.Shadow>? shadows}) {
     final html.CanvasRenderingContext2D ctx = _canvasPool.context;
     if (shadows != null) {
       ctx.save();
@@ -925,18 +919,36 @@ class BitmapCanvas extends EngineCanvas {
         ctx.shadowOffsetX = shadow.offset.dx;
         ctx.shadowOffsetY = shadow.offset.dy;
 
-        ctx.fillText(text, x, y);
+        if (style == ui.PaintingStyle.stroke) {
+          ctx.strokeText(text, x, y);
+        } else {
+          ctx.fillText(text, x, y);
+        }
       }
       ctx.restore();
     }
-    ctx.fillText(text, x, y);
+
+    if (style == ui.PaintingStyle.stroke) {
+      ctx.strokeText(text, x, y);
+    } else {
+      ctx.fillText(text, x, y);
+    }
   }
 
   @override
-  void drawParagraph(EngineParagraph paragraph, ui.Offset offset) {
+  void drawParagraph(CanvasParagraph paragraph, ui.Offset offset) {
     assert(paragraph.isLaidOut);
 
-    if (paragraph.drawOnCanvas && _childOverdraw == false) {
+    /// - paragraph.drawOnCanvas checks that the text styling doesn't include
+    /// features that prevent text from being rendered correctly using canvas.
+    /// - _childOverdraw check prevents sandwitching multiple canvas elements
+    /// when we have alternating paragraphs and other drawing commands that are
+    /// suitable for canvas.
+    /// - To make sure an svg filter is applied correctly to paragraph we
+    /// check isInsideSvgFilterTree to make sure dom node doesn't have any
+    /// parents that apply one.
+    if (paragraph.drawOnCanvas && _childOverdraw == false &&
+        !_renderStrategy.isInsideSvgFilterTree) {
       paragraph.paint(this, offset);
       return;
     }
@@ -949,7 +961,7 @@ class BitmapCanvas extends EngineCanvas {
           paragraphElement as html.HtmlElement,
           offset,
           _canvasPool.currentTransform);
-      for (html.Element clipElement in clipElements) {
+      for (final html.Element clipElement in clipElements) {
         rootElement.append(clipElement);
         _children.add(clipElement);
       }
@@ -963,8 +975,8 @@ class BitmapCanvas extends EngineCanvas {
     _children.add(paragraphElement);
     // If there is a prior sibling such as img prevent left/top shift.
     paragraphElement.style
-      ..left = "0px"
-      ..top = "0px";
+      ..left = '0px'
+      ..top = '0px';
     _closeCurrentCanvas();
   }
 
@@ -983,7 +995,7 @@ class BitmapCanvas extends EngineCanvas {
   @override
   void drawVertices(SurfaceVertices vertices, ui.BlendMode blendMode,
       SurfacePaintData paint) {
-    // TODO(flutter_web): Implement shaders for [Paint.shader] and
+    // TODO(ferhat): Implement shaders for [Paint.shader] and
     // blendMode. https://github.com/flutter/flutter/issues/40096
     // Move rendering to OffscreenCanvas so that transform is preserved
     // as well.
@@ -991,7 +1003,7 @@ class BitmapCanvas extends EngineCanvas {
         'Linear/Radial/SweepGradient not supported yet');
     final Int32List? colors = vertices.colors;
     final ui.VertexMode mode = vertices.mode;
-    html.CanvasRenderingContext2D? ctx = _canvasPool.context;
+    final html.CanvasRenderingContext2D ctx = _canvasPool.context;
     if (colors == null &&
         paint.style != ui.PaintingStyle.fill &&
         paint.shader == null) {
@@ -1000,7 +1012,7 @@ class BitmapCanvas extends EngineCanvas {
           : convertVertexPositions(mode, vertices.positions);
       // Draw hairline for vertices if no vertex colors are specified.
       save();
-      final ui.Color color = paint.color ?? ui.Color(0xFF000000);
+      final ui.Color color = paint.color ?? const ui.Color(0xFF000000);
       _canvasPool.contextHandle
         ..fillStyle = null
         ..strokeStyle = colorToCssString(color);
@@ -1048,18 +1060,19 @@ class BitmapCanvas extends EngineCanvas {
     _elementCache?.commitFrame();
     // Wrap all elements in translate3d (workaround for webkit paint order bug).
     if (_contains3dTransform && browserEngine == BrowserEngine.webkit) {
-      for (html.Element element in rootElement.children) {
-        html.DivElement paintOrderElement = html.DivElement()
+      for (final html.Element element in rootElement.children) {
+        final html.DivElement paintOrderElement = html.DivElement()
           ..style.transform = 'translate3d(0,0,0)';
         paintOrderElement.append(element);
         rootElement.append(paintOrderElement);
         _children.add(paintOrderElement);
       }
     }
-    if (rootElement.firstChild is html.HtmlElement &&
-        (rootElement.firstChild as html.HtmlElement).tagName.toLowerCase() ==
+    final html.Node? firstChild = rootElement.firstChild;
+    if (firstChild != null && firstChild is html.HtmlElement &&
+        firstChild.tagName.toLowerCase() ==
             'canvas') {
-      (rootElement.firstChild as html.HtmlElement).style.zIndex = '-1';
+      firstChild.style.zIndex = '-1';
     }
   }
 
@@ -1070,11 +1083,11 @@ class BitmapCanvas extends EngineCanvas {
     final double dpr = ui.window.devicePixelRatio;
     final double width = ui.window.physicalSize.width * dpr;
     final double height = ui.window.physicalSize.height * dpr;
-    Vector3 topLeft = inverted.perspectiveTransform(Vector3(0, 0, 0));
-    Vector3 topRight = inverted.perspectiveTransform(Vector3(width, 0, 0));
-    Vector3 bottomRight =
+    final Vector3 topLeft = inverted.perspectiveTransform(Vector3(0, 0, 0));
+    final Vector3 topRight = inverted.perspectiveTransform(Vector3(width, 0, 0));
+    final Vector3 bottomRight =
         inverted.perspectiveTransform(Vector3(width, height, 0));
-    Vector3 bottomLeft = inverted.perspectiveTransform(Vector3(0, height, 0));
+    final Vector3 bottomLeft = inverted.perspectiveTransform(Vector3(0, height, 0));
     return ui.Rect.fromLTRB(
       math.min(topLeft.x,
           math.min(topRight.x, math.min(bottomRight.x, bottomLeft.x))),
@@ -1093,7 +1106,15 @@ class BitmapCanvas extends EngineCanvas {
   }
 }
 
-String? stringForBlendMode(ui.BlendMode? blendMode) {
+/// The CSS value for the `mix-blend-mode` CSS property.
+///
+/// This list includes values supposrted by SVG, but it's not the same.
+///
+/// See also:
+///
+///  * https://developer.mozilla.org/en-US/docs/Web/CSS/mix-blend-mode
+///  * [blendModeToSvgEnum], which specializes on SVG blend modes
+String? blendModeToCssMixBlendMode(ui.BlendMode? blendMode) {
   if (blendMode == null) {
     return null;
   }
@@ -1122,7 +1143,7 @@ String? stringForBlendMode(ui.BlendMode? blendMode) {
       return 'xor';
     case ui.BlendMode.multiply:
     // Falling back to multiply, ignoring alpha channel.
-    // TODO(flutter_web): only used for debug, find better fallback for web.
+    // TODO(ferhat): only used for debug, find better fallback for web.
     case ui.BlendMode.modulate:
       return 'multiply';
     case ui.BlendMode.screen:
@@ -1156,6 +1177,140 @@ String? stringForBlendMode(ui.BlendMode? blendMode) {
     default:
       throw UnimplementedError(
           'Flutter Web does not support the blend mode: $blendMode');
+  }
+}
+
+// Source: https://www.w3.org/TR/SVG11/filters.html#InterfaceSVGFEBlendElement
+// These constant names deviate from Dart's camelCase convention on purpose to
+// make it easier to search for them in W3 specs and in Chromium sources.
+const int SVG_FEBLEND_MODE_UNKNOWN = 0;
+const int SVG_FEBLEND_MODE_NORMAL = 1;
+const int SVG_FEBLEND_MODE_MULTIPLY = 2;
+const int SVG_FEBLEND_MODE_SCREEN = 3;
+const int SVG_FEBLEND_MODE_DARKEN = 4;
+const int SVG_FEBLEND_MODE_LIGHTEN = 5;
+const int SVG_FEBLEND_MODE_OVERLAY = 6;
+const int SVG_FEBLEND_MODE_COLOR_DODGE = 7;
+const int SVG_FEBLEND_MODE_COLOR_BURN = 8;
+const int SVG_FEBLEND_MODE_HARD_LIGHT = 9;
+const int SVG_FEBLEND_MODE_SOFT_LIGHT = 10;
+const int SVG_FEBLEND_MODE_DIFFERENCE = 11;
+const int SVG_FEBLEND_MODE_EXCLUSION = 12;
+const int SVG_FEBLEND_MODE_HUE = 13;
+const int SVG_FEBLEND_MODE_SATURATION = 14;
+const int SVG_FEBLEND_MODE_COLOR = 15;
+const int SVG_FEBLEND_MODE_LUMINOSITY = 16;
+
+// Source: https://github.com/chromium/chromium/blob/e1e495b29e1178a451f65980a6c4ae017c34dc94/third_party/blink/renderer/platform/graphics/graphics_types.cc#L55
+const String kCompositeClear = 'clear';
+const String kCompositeCopy = 'copy';
+const String kCompositeSourceOver = 'source-over';
+const String kCompositeSourceIn = 'source-in';
+const String kCompositeSourceOut = 'source-out';
+const String kCompositeSourceAtop = 'source-atop';
+const String kCompositeDestinationOver = 'destination-over';
+const String kCompositeDestinationIn = 'destination-in';
+const String kCompositeDestinationOut = 'destination-out';
+const String kCompositeDestinationAtop = 'destination-atop';
+const String kCompositeXor = 'xor';
+const String kCompositeLighter = 'lighter';
+
+/// Compositing and blending operation in SVG.
+///
+/// Flutter's [BlendMode] flattens what SVG expresses as two orthogonal
+/// properties, a composite operator and blend mode. Instances of this class
+/// are returned from [blendModeToSvgEnum] by mapping Flutter's [BlendMode]
+/// enum onto the SVG equivalent.
+///
+/// See also:
+///
+///  * https://www.w3.org/TR/compositing-1
+///  * https://github.com/chromium/chromium/blob/e1e495b29e1178a451f65980a6c4ae017c34dc94/third_party/blink/renderer/platform/graphics/graphics_types.cc#L55
+///  * https://github.com/chromium/chromium/blob/e1e495b29e1178a451f65980a6c4ae017c34dc94/third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_context_2d.cc#L725
+class SvgBlendMode {
+  const SvgBlendMode(this.compositeOperator, this.blendMode);
+
+  /// The name of the SVG composite operator.
+  ///
+  /// If this mode represents a blend mode, this is set to [kCompositeSourceOver].
+  final String compositeOperator;
+
+  /// The identifier of the SVG blend mode.
+  ///
+  /// This is mode represents a compositing operation, this is set to [SVG_FEBLEND_MODE_UNKNOWN].
+  final int blendMode;
+}
+
+/// Converts Flutter's [ui.BlendMode] to SVG's <compositing operation, blend mode> pair.
+SvgBlendMode? blendModeToSvgEnum(ui.BlendMode? blendMode) {
+  if (blendMode == null) {
+    return null;
+  }
+  switch (blendMode) {
+    case ui.BlendMode.clear:
+      return const SvgBlendMode(kCompositeClear, SVG_FEBLEND_MODE_UNKNOWN);
+    case ui.BlendMode.srcOver:
+      return const SvgBlendMode(kCompositeSourceOver, SVG_FEBLEND_MODE_UNKNOWN);
+    case ui.BlendMode.srcIn:
+      return const SvgBlendMode(kCompositeSourceIn, SVG_FEBLEND_MODE_UNKNOWN);
+    case ui.BlendMode.srcOut:
+      return const SvgBlendMode(kCompositeSourceOut, SVG_FEBLEND_MODE_UNKNOWN);
+    case ui.BlendMode.srcATop:
+      return const SvgBlendMode(kCompositeSourceAtop, SVG_FEBLEND_MODE_UNKNOWN);
+    case ui.BlendMode.dstOver:
+      return const SvgBlendMode(kCompositeDestinationOver, SVG_FEBLEND_MODE_UNKNOWN);
+    case ui.BlendMode.dstIn:
+      return const SvgBlendMode(kCompositeDestinationIn, SVG_FEBLEND_MODE_UNKNOWN);
+    case ui.BlendMode.dstOut:
+      return const SvgBlendMode(kCompositeDestinationOut, SVG_FEBLEND_MODE_UNKNOWN);
+    case ui.BlendMode.dstATop:
+      return const SvgBlendMode(kCompositeDestinationAtop, SVG_FEBLEND_MODE_UNKNOWN);
+    case ui.BlendMode.plus:
+      return const SvgBlendMode(kCompositeLighter, SVG_FEBLEND_MODE_UNKNOWN);
+    case ui.BlendMode.src:
+      return const SvgBlendMode(kCompositeCopy, SVG_FEBLEND_MODE_UNKNOWN);
+    case ui.BlendMode.xor:
+      return const SvgBlendMode(kCompositeXor, SVG_FEBLEND_MODE_UNKNOWN);
+    case ui.BlendMode.multiply:
+    // Falling back to multiply, ignoring alpha channel.
+    // TODO(ferhat): only used for debug, find better fallback for web.
+    case ui.BlendMode.modulate:
+      return const SvgBlendMode(kCompositeSourceOver, SVG_FEBLEND_MODE_MULTIPLY);
+    case ui.BlendMode.screen:
+      return const SvgBlendMode(kCompositeSourceOver, SVG_FEBLEND_MODE_SCREEN);
+    case ui.BlendMode.overlay:
+      return const SvgBlendMode(kCompositeSourceOver, SVG_FEBLEND_MODE_OVERLAY);
+    case ui.BlendMode.darken:
+      return const SvgBlendMode(kCompositeSourceOver, SVG_FEBLEND_MODE_DARKEN);
+    case ui.BlendMode.lighten:
+      return const SvgBlendMode(kCompositeSourceOver, SVG_FEBLEND_MODE_LIGHTEN);
+    case ui.BlendMode.colorDodge:
+      return const SvgBlendMode(kCompositeSourceOver, SVG_FEBLEND_MODE_COLOR_DODGE);
+    case ui.BlendMode.colorBurn:
+      return const SvgBlendMode(kCompositeSourceOver, SVG_FEBLEND_MODE_COLOR_BURN);
+    case ui.BlendMode.hardLight:
+      return const SvgBlendMode(kCompositeSourceOver, SVG_FEBLEND_MODE_HARD_LIGHT);
+    case ui.BlendMode.softLight:
+      return const SvgBlendMode(kCompositeSourceOver, SVG_FEBLEND_MODE_SOFT_LIGHT);
+    case ui.BlendMode.difference:
+      return const SvgBlendMode(kCompositeSourceOver, SVG_FEBLEND_MODE_DIFFERENCE);
+    case ui.BlendMode.exclusion:
+      return const SvgBlendMode(kCompositeSourceOver, SVG_FEBLEND_MODE_EXCLUSION);
+    case ui.BlendMode.hue:
+      return const SvgBlendMode(kCompositeSourceOver, SVG_FEBLEND_MODE_HUE);
+    case ui.BlendMode.saturation:
+      return const SvgBlendMode(kCompositeSourceOver, SVG_FEBLEND_MODE_SATURATION);
+    case ui.BlendMode.color:
+      return const SvgBlendMode(kCompositeSourceOver, SVG_FEBLEND_MODE_COLOR);
+    case ui.BlendMode.luminosity:
+      return const SvgBlendMode(kCompositeSourceOver, SVG_FEBLEND_MODE_LUMINOSITY);
+    default:
+      assert(
+        false,
+        'Flutter Web does not support the blend mode: $blendMode',
+      );
+
+    return const SvgBlendMode(kCompositeSourceOver, SVG_FEBLEND_MODE_NORMAL);
   }
 }
 
@@ -1207,14 +1362,14 @@ List<html.Element> _clipContent(List<SaveClipEntry> clipStack,
     if (root == null) {
       root = newElement;
     } else {
-      domRenderer.append(curElement!, newElement);
+      curElement!.append(newElement);
     }
     curElement = newElement;
     final ui.Rect? rect = entry.rect;
     Matrix4 newClipTransform = entry.currentTransform;
     final TransformKind transformKind =
         transformKindOf(newClipTransform.storage);
-    bool requiresTransformStyle = transformKind == TransformKind.complex;
+    final bool requiresTransformStyle = transformKind == TransformKind.complex;
     if (rect != null) {
       final double clipOffsetX = rect.left;
       final double clipOffsetY = rect.top;
@@ -1244,7 +1399,7 @@ List<html.Element> _clipContent(List<SaveClipEntry> clipStack,
       // Clipping optimization when we know that the path is an oval.
       // We use a div with border-radius set to 50% with a size that is
       // set to path bounds and set overflow to hidden.
-      final SurfacePath surfacePath = entry.path as SurfacePath;
+      final SurfacePath surfacePath = entry.path! as SurfacePath;
       if (surfacePath.pathRef.isOval != -1) {
         final ui.Rect ovalBounds = surfacePath.getBounds();
         final double clipOffsetX = ovalBounds.left;
@@ -1262,16 +1417,14 @@ List<html.Element> _clipContent(List<SaveClipEntry> clipStack,
         curElement.style
           ..transform = matrix4ToCssTransform(newClipTransform)
           ..transformOrigin = '0 0 0';
-        String svgClipPath =
-            createSvgClipDef(curElement as html.HtmlElement, entry.path!);
         final html.Element clipElement =
-            html.Element.html(svgClipPath, treeSanitizer: NullTreeSanitizer());
+            createSvgClipDef(curElement as html.HtmlElement, entry.path!);
         clipDefs.add(clipElement);
       }
     }
     // Reverse the transform of the clipping element so children can use
     // effective transform to render.
-    // TODO(flutter_web): When we have more than a single clip element,
+    // TODO(ferhat): When we have more than a single clip element,
     // reduce number of div nodes by merging (multiplying transforms).
     final html.Element reverseTransformDiv = html.DivElement();
     reverseTransformDiv.style.position = 'absolute';
@@ -1289,7 +1442,7 @@ List<html.Element> _clipContent(List<SaveClipEntry> clipStack,
   }
 
   root!.style.position = 'absolute';
-  domRenderer.append(curElement!, content);
+  curElement!.append(content);
   setElementTransform(
     content,
     transformWithOffset(currentTransform, offset).storage,

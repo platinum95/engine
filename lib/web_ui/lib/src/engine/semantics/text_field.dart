@@ -49,9 +49,6 @@ class SemanticsTextEditingStrategy extends DefaultTextEditingStrategy {
   /// Current input configuration supplied by the "flutter/textinput" channel.
   InputConfiguration? inputConfig;
 
-  OnChangeCallback? onChange;
-  OnActionCallback? onAction;
-
   /// The semantics implementation does not operate on DOM nodes, but only
   /// remembers the config and callbacks. This is because the DOM nodes are
   /// supplied in the semantics update and enabled by [activate].
@@ -174,15 +171,15 @@ class SemanticsTextEditingStrategy extends DefaultTextEditingStrategy {
   }
 
   @override
-  void updateElementPlacement(EditableTextGeometry geometry) {
+  void updateElementPlacement(EditableTextGeometry textGeometry) {
     // Element placement is done by [TextField].
   }
 
   EditableTextStyle? _queuedStyle;
 
   @override
-  void updateElementStyle(EditableTextStyle style) {
-    _queuedStyle = style;
+  void updateElementStyle(EditableTextStyle textStyle) {
+    _queuedStyle = textStyle;
     _syncStyle();
   }
 
@@ -223,7 +220,7 @@ class TextField extends RoleManager {
   void _setupDomElement() {
     // On iOS, even though the semantic text field is transparent, the cursor
     // and text highlighting are still visible. The cursor and text selection
-    // are made invisible by CSS in [DomRenderer.reset].
+    // are made invisible by CSS in [FlutterViewEmbedder.reset].
     // But there's one more case where iOS highlights text. That's when there's
     // and autocorrect suggestion. To disable that, we have to do the following:
     editableElement
@@ -255,7 +252,6 @@ class TextField extends RoleManager {
       case BrowserEngine.edge:
       case BrowserEngine.ie11:
       case BrowserEngine.firefox:
-      case BrowserEngine.ie11:
       case BrowserEngine.unknown:
         _initializeForBlink();
         break;

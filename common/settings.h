@@ -37,6 +37,8 @@ class FrameTiming {
       kVsyncStart,  kBuildStart,   kBuildFinish,
       kRasterStart, kRasterFinish, kRasterFinishWallTime};
 
+  static constexpr int kStatisticsCount = kCount + 5;
+
   fml::TimePoint Get(Phase phase) const { return data_[phase]; }
   fml::TimePoint Set(Phase phase, fml::TimePoint value) {
     return data_[phase] = value;
@@ -44,10 +46,27 @@ class FrameTiming {
 
   uint64_t GetFrameNumber() const { return frame_number_; }
   void SetFrameNumber(uint64_t frame_number) { frame_number_ = frame_number; }
+  uint64_t GetLayerCacheCount() const { return layer_cache_count_; }
+  uint64_t GetLayerCacheBytes() const { return layer_cache_bytes_; }
+  uint64_t GetPictureCacheCount() const { return picture_cache_count_; }
+  uint64_t GetPictureCacheBytes() const { return picture_cache_bytes_; }
+  void SetRasterCacheStatistics(size_t layer_cache_count,
+                                size_t layer_cache_bytes,
+                                size_t picture_cache_count,
+                                size_t picture_cache_bytes) {
+    layer_cache_count_ = layer_cache_count;
+    layer_cache_bytes_ = layer_cache_bytes;
+    picture_cache_count_ = picture_cache_count;
+    picture_cache_bytes_ = picture_cache_bytes;
+  }
 
  private:
   fml::TimePoint data_[kCount];
   uint64_t frame_number_;
+  size_t layer_cache_count_;
+  size_t layer_cache_bytes_;
+  size_t picture_cache_count_;
+  size_t picture_cache_bytes_;
 };
 
 using TaskObserverAdd =
@@ -88,6 +107,8 @@ struct Settings {
   std::string isolate_snapshot_instr_path;  // deprecated
   MappingCallback isolate_snapshot_instr;
 
+  std::string route;
+
   // Returns the Mapping to a kernel buffer which contains sources for dart:*
   // libraries.
   MappingCallback dart_library_sources_kernel;
@@ -97,21 +118,22 @@ struct Settings {
   // case the primary path to the library can not be loaded.
   std::vector<std::string> application_library_path;
 
+  // Path to a library containing compiled Dart code usable for launching
+  // the VM service isolate.
+  std::vector<std::string> vmservice_snapshot_library_path;
+
   std::string application_kernel_asset;       // deprecated
   std::string application_kernel_list_asset;  // deprecated
   MappingsCallback application_kernels;
 
   std::string temp_directory_path;
   std::vector<std::string> dart_flags;
-  // Arguments passed as a List<String> to Dart's entrypoint function.
-  std::vector<std::string> dart_entrypoint_args;
-
   // Isolate settings
   bool enable_checked_mode = false;
   bool start_paused = false;
   bool trace_skia = false;
   std::vector<std::string> trace_allowlist;
-  std::vector<std::string> trace_skia_allowlist;
+  std::optional<std::vector<std::string>> trace_skia_allowlist;
   bool trace_startup = false;
   bool trace_systrace = false;
   bool dump_skp_on_shader_compilation = false;
@@ -120,6 +142,7 @@ struct Settings {
   bool endless_trace_buffer = false;
   bool enable_dart_profiling = false;
   bool disable_dart_asserts = false;
+  bool enable_serial_gc = false;
 
   // Whether embedder only allows secure connections.
   bool may_insecurely_connect_to_all_domains = true;
@@ -162,11 +185,18 @@ struct Settings {
   // Font settings
   bool use_test_fonts = false;
 
+  // Indicates whether the embedding started a prefetch of the default font
+  // manager before creating the engine.
+  bool prefetched_default_font_manager = false;
+
   // Selects the SkParagraph implementation of the text layout engine.
   bool enable_skparagraph = false;
 
   // Selects the DisplayList for storage of rendering operations.
-  bool enable_display_list = false;
+  bool enable_display_list = true;
+
+  // Data set by platform-specific embedders for use in font initialization.
+  uint32_t font_initialization_data = 0;
 
   // All shells in the process share the same VM. The last shell to shutdown
   // should typically shut down the VM as well. However, applications depend on
@@ -180,6 +210,10 @@ struct Settings {
   // shells in the platform (via their embedding APIs) should cooperate to make
   // sure this flag is never set if they want the VM to shutdown and free all
   // associated resources.
+  // It can be customized by application, more detail:
+  // https://github.com/flutter/flutter/issues/95903
+  // TODO(eggfly): Should it be set to false by default?
+  // https://github.com/flutter/flutter/issues/96843
   bool leak_vm = true;
 
   // Engine settings

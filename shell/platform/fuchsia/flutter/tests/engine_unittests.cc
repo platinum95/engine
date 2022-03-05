@@ -2,31 +2,38 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include <fuchsia/scenic/scheduling/cpp/fidl.h>
-#include <fuchsia/ui/policy/cpp/fidl.h>
 #include <fuchsia/ui/scenic/cpp/fidl.h>
 #include <lib/async-loop/default.h>
 #include <lib/sys/cpp/component_context.h>
 
-#include "assets/directory_asset_bundle.h"
+#include "flutter/assets/directory_asset_bundle.h"
 #include "flutter/common/graphics/persistent_cache.h"
 #include "flutter/fml/memory/ref_ptr.h"
 #include "flutter/fml/message_loop_impl.h"
 #include "flutter/fml/task_runner.h"
 #include "flutter/shell/common/serialization_callbacks.h"
-#include "flutter/shell/platform/fuchsia/flutter/default_session_connection.h"
+#include "flutter/shell/common/thread_host.h"
+#include "third_party/skia/include/core/SkPicture.h"
+#include "third_party/skia/include/core/SkPictureRecorder.h"
+#include "third_party/skia/include/core/SkSerialProcs.h"
+
 #include "flutter/shell/platform/fuchsia/flutter/logging.h"
 #include "flutter/shell/platform/fuchsia/flutter/runner.h"
-#include "gtest/gtest.h"
-#include "include/core/SkPicture.h"
-#include "include/core/SkPictureRecorder.h"
-#include "include/core/SkSerialProcs.h"
+#include "flutter/shell/platform/fuchsia/flutter/vulkan_surface_producer.h"
 
-using namespace flutter_runner;
+#include "gtest/gtest.h"
+
 using namespace flutter;
 
 namespace flutter_runner {
 namespace testing {
+namespace {
+
+std::string GetCurrentTestName() {
+  return ::testing::UnitTest::GetInstance()->current_test_info()->name();
+}
+
+}  // namespace
 
 class MockTaskRunner : public fml::BasicTaskRunner {
  public:
@@ -59,29 +66,69 @@ class EngineTest : public ::testing::Test {
       uint64_t height,
       std::shared_ptr<flutter::AssetManager> asset_manager,
       std::optional<const std::vector<std::string>> skp_names,
-      std::optional<std::function<void(uint32_t)>> completion_callback) {
+      std::optional<std::function<void(uint32_t)>> completion_callback,
+      bool synchronous = true) {
     // Have to create a message loop so default async dispatcher gets set,
     // otherwise we segfault creating the VulkanSurfaceProducer
-    auto loop = fml::MessageLoopImpl::Create();
+    loop_ = fml::MessageLoopImpl::Create();
 
     context_ = sys::ComponentContext::CreateAndServeOutgoingDirectory();
     scenic_ = context_->svc()->Connect<fuchsia::ui::scenic::Scenic>();
-    scenic::Session session(scenic_.get());
-    surface_producer_ = std::make_unique<VulkanSurfaceProducer>(&session);
+    session_.emplace(scenic_.get());
+    surface_producer_ =
+        std::make_shared<VulkanSurfaceProducer>(&session_.value());
 
     Engine::WarmupSkps(&concurrent_task_runner_, &raster_task_runner_,
-                       *surface_producer_, width, height, asset_manager,
-                       std::nullopt, std::nullopt);
+                       surface_producer_, SkISize::Make(width, height),
+                       asset_manager, skp_names, completion_callback,
+                       synchronous);
   }
 
  protected:
+  fml::RefPtr<fml::MessageLoopImpl> loop_;
   MockTaskRunner concurrent_task_runner_;
   MockTaskRunner raster_task_runner_;
-  std::unique_ptr<VulkanSurfaceProducer> surface_producer_;
+  std::shared_ptr<VulkanSurfaceProducer> surface_producer_;
 
   std::unique_ptr<sys::ComponentContext> context_;
   fuchsia::ui::scenic::ScenicPtr scenic_;
+  std::optional<scenic::Session> session_;
 };
+
+TEST_F(EngineTest, ThreadNames) {
+  std::string prefix = GetCurrentTestName();
+  flutter::ThreadHost engine_thread_host = Engine::CreateThreadHost(prefix);
+
+  char thread_name[ZX_MAX_NAME_LEN];
+  zx::thread::self()->get_property(ZX_PROP_NAME, thread_name,
+                                   sizeof(thread_name));
+  EXPECT_EQ(std::string(thread_name), prefix + std::string(".platform"));
+  EXPECT_EQ(engine_thread_host.platform_thread, nullptr);
+
+  engine_thread_host.raster_thread->GetTaskRunner()->PostTask([&prefix]() {
+    char thread_name[ZX_MAX_NAME_LEN];
+    zx::thread::self()->get_property(ZX_PROP_NAME, thread_name,
+                                     sizeof(thread_name));
+    EXPECT_EQ(std::string(thread_name), prefix + std::string(".raster"));
+  });
+  engine_thread_host.raster_thread->Join();
+
+  engine_thread_host.ui_thread->GetTaskRunner()->PostTask([&prefix]() {
+    char thread_name[ZX_MAX_NAME_LEN];
+    zx::thread::self()->get_property(ZX_PROP_NAME, thread_name,
+                                     sizeof(thread_name));
+    EXPECT_EQ(std::string(thread_name), prefix + std::string(".ui"));
+  });
+  engine_thread_host.ui_thread->Join();
+
+  engine_thread_host.io_thread->GetTaskRunner()->PostTask([&prefix]() {
+    char thread_name[ZX_MAX_NAME_LEN];
+    zx::thread::self()->get_property(ZX_PROP_NAME, thread_name,
+                                     sizeof(thread_name));
+    EXPECT_EQ(std::string(thread_name), prefix + std::string(".io"));
+  });
+  engine_thread_host.io_thread->Join();
+}
 
 TEST_F(EngineTest, SkpWarmup) {
   SkISize draw_size = SkISize::Make(100, 100);
@@ -119,7 +166,7 @@ TEST_F(EngineTest, SkpWarmup) {
       std::make_unique<DirectoryAssetBundle>(std::move(asset_dir_fd), false));
 
   WarmupSkps(draw_size.width(), draw_size.height(), asset_manager, std::nullopt,
-             std::nullopt);
+             [](uint32_t count) { EXPECT_EQ(1u, count); });
   concurrent_task_runner_.Run();
   raster_task_runner_.Run();
 
@@ -152,8 +199,9 @@ TEST_F(EngineTest, SkpWarmupAsync) {
   fml::ScopedTemporaryDirectory asset_dir;
   fml::UniqueFD asset_dir_fd = fml::OpenDirectory(
       asset_dir.path().c_str(), false, fml::FilePermission::kRead);
-  fml::UniqueFD subdir_fd = fml::OpenDirectory(asset_dir_fd, "shaders", true,
-                                               fml::FilePermission::kReadWrite);
+  std::string subdir_name = "shaders";
+  fml::UniqueFD subdir_fd = fml::OpenDirectory(
+      asset_dir_fd, subdir_name.c_str(), true, fml::FilePermission::kReadWrite);
   std::string skp_name = "test.skp";
 
   bool success = fml::WriteAtomically(subdir_fd, skp_name.c_str(), mapping);
@@ -163,7 +211,7 @@ TEST_F(EngineTest, SkpWarmupAsync) {
   asset_manager->PushBack(
       std::make_unique<DirectoryAssetBundle>(std::move(asset_dir_fd), false));
 
-  std::vector<std::string> skp_names = {skp_name};
+  std::vector<std::string> skp_names = {subdir_name + "/" + skp_name};
 
   WarmupSkps(draw_size.width(), draw_size.height(), asset_manager, skp_names,
              [](uint32_t count) { EXPECT_EQ(1u, count); });

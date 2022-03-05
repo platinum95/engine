@@ -2,11 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import 'package:ui/src/engine.dart';
-import 'package:ui/ui.dart' as ui;
+import 'dart:html' as html;
 
 import 'package:test/bootstrap/browser.dart';
 import 'package:test/test.dart';
+
+import 'package:ui/src/engine.dart';
+import 'package:ui/ui.dart' as ui;
 
 import 'mock_engine_canvas.dart';
 
@@ -15,10 +17,6 @@ void main() {
 }
 
 void testMain() {
-  setUpAll(() {
-    WebExperiments.ensureInitialized();
-  });
-
   group('EngineCanvas', () {
     late MockEngineCanvas mockCanvas;
     late ui.Paragraph paragraph;
@@ -31,14 +29,14 @@ void testMain() {
     }) {
       test(description, () {
         testFn(BitmapCanvas(canvasSize, RenderStrategy()));
-        testFn(DomCanvas(domRenderer.createElement('flt-picture')));
+        testFn(DomCanvas(html.document.createElement('flt-picture')));
         testFn(mockCanvas = MockEngineCanvas());
         whenDone?.call();
       });
     }
 
     testCanvas('draws laid out paragraph', (EngineCanvas canvas) {
-      final ui.Rect screenRect = const ui.Rect.fromLTWH(0, 0, 100, 100);
+      const ui.Rect screenRect = ui.Rect.fromLTWH(0, 0, 100, 100);
       final RecordingCanvas recordingCanvas = RecordingCanvas(screenRect);
       final ui.ParagraphBuilder builder =
           ui.ParagraphBuilder(ui.ParagraphStyle());
@@ -63,7 +61,7 @@ void testMain() {
 
     testCanvas('ignores paragraphs that were not laid out',
         (EngineCanvas canvas) {
-      final ui.Rect screenRect = const ui.Rect.fromLTWH(0, 0, 100, 100);
+      const ui.Rect screenRect = ui.Rect.fromLTWH(0, 0, 100, 100);
       final RecordingCanvas recordingCanvas = RecordingCanvas(screenRect);
       final ui.ParagraphBuilder builder =
           ui.ParagraphBuilder(ui.ParagraphStyle());

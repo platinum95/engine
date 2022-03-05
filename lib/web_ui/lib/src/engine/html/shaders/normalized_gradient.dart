@@ -6,8 +6,8 @@ import 'dart:typed_data';
 
 import 'package:ui/ui.dart' as ui;
 
+import '../../safe_browser_api.dart';
 import 'shader_builder.dart';
-import 'webgl_context.dart';
 
 /// Converts colors and stops to typed array of bias, scale and threshold to use
 /// in shaders.
@@ -22,13 +22,11 @@ import 'webgl_context.dart';
 ///              scale = (c2 - c1) / (t2 - t1)
 ///              bias = c1 - t1 / (t2 - t1) * (c2 - c1)
 class NormalizedGradient {
-  NormalizedGradient._(
-      this.thresholdCount, this._thresholds, this._scale, this._bias);
-
   final Float32List _thresholds;
   final Float32List _bias;
   final Float32List _scale;
   final int thresholdCount;
+  final bool isOpaque;
 
   factory NormalizedGradient(List<ui.Color> colors, {List<double>? stops}) {
     // If colorStops is not provided, then only two stops, at 0.0 and 1.0,
@@ -37,8 +35,9 @@ class NormalizedGradient {
     stops ??= const <double>[0.0, 1.0];
     final int colorCount = colors.length;
     int normalizedCount = colorCount;
-    bool addFirst = stops[0] != 0.0;
-    bool addLast = stops.last != 1.0;
+    final bool isOpaque = !colors.any((ui.Color c) => c.alpha < 1.0);
+    final bool addFirst = stops[0] != 0.0;
+    final bool addLast = stops.last != 1.0;
     if (addFirst) {
       normalizedCount++;
     }
@@ -52,24 +51,24 @@ class NormalizedGradient {
     int targetIndex = 0;
     int thresholdIndex = 0;
     if (addFirst) {
-      ui.Color c = colors[0];
+      final ui.Color c = colors[0];
       bias[targetIndex++] = c.red / 255.0;
       bias[targetIndex++] = c.green / 255.0;
       bias[targetIndex++] = c.blue / 255.0;
       bias[targetIndex++] = c.alpha / 255.0;
       thresholds[thresholdIndex++] = 0.0;
     }
-    for (ui.Color c in colors) {
+    for (final ui.Color c in colors) {
       bias[targetIndex++] = c.red / 255.0;
       bias[targetIndex++] = c.green / 255.0;
       bias[targetIndex++] = c.blue / 255.0;
       bias[targetIndex++] = c.alpha / 255.0;
     }
-    for (double stop in stops) {
+    for (final double stop in stops) {
       thresholds[thresholdIndex++] = stop;
     }
     if (addLast) {
-      ui.Color c = colors.last;
+      final ui.Color c = colors.last;
       bias[targetIndex++] = c.red / 255.0;
       bias[targetIndex++] = c.green / 255.0;
       bias[targetIndex++] = c.blue / 255.0;
@@ -78,9 +77,9 @@ class NormalizedGradient {
     }
     // Now that we have bias for each color stop, we can compute scale based
     // on delta between colors.
-    int lastColorIndex = 4 * (normalizedCount - 1);
+    final int lastColorIndex = 4 * (normalizedCount - 1);
     for (int i = 0; i < lastColorIndex; i++) {
-      int thresholdIndex = i >> 2;
+      final int thresholdIndex = i >> 2;
       scale[i] = (bias[i + 4] - bias[i]) /
           (thresholds[thresholdIndex + 1] - thresholds[thresholdIndex]);
     }
@@ -90,28 +89,31 @@ class NormalizedGradient {
     scale[lastColorIndex + 3] = 0.0;
     // Compute bias = colorAtStop - stopValue * (scale).
     for (int i = 0; i < normalizedCount; i++) {
-      double t = thresholds[i];
-      int colorIndex = i * 4;
+      final double t = thresholds[i];
+      final int colorIndex = i * 4;
       bias[colorIndex] -= t * scale[colorIndex];
       bias[colorIndex + 1] -= t * scale[colorIndex + 1];
       bias[colorIndex + 2] -= t * scale[colorIndex + 2];
       bias[colorIndex + 3] -= t * scale[colorIndex + 3];
     }
-    return NormalizedGradient._(normalizedCount, thresholds, scale, bias);
+    return NormalizedGradient._(normalizedCount, thresholds, scale, bias, isOpaque);
   }
+
+  NormalizedGradient._(
+      this.thresholdCount, this._thresholds, this._scale, this._bias, this.isOpaque);
 
   /// Sets uniforms for threshold, bias and scale for program.
   void setupUniforms(GlContext gl, GlProgram glProgram) {
     for (int i = 0; i < thresholdCount; i++) {
-      Object biasId = gl.getUniformLocation(glProgram.program, 'bias_$i');
+      final Object biasId = gl.getUniformLocation(glProgram.program, 'bias_$i');
       gl.setUniform4f(biasId, _bias[i * 4], _bias[i * 4 + 1], _bias[i * 4 + 2],
           _bias[i * 4 + 3]);
-      Object scaleId = gl.getUniformLocation(glProgram.program, 'scale_$i');
+      final Object scaleId = gl.getUniformLocation(glProgram.program, 'scale_$i');
       gl.setUniform4f(scaleId, _scale[i * 4], _scale[i * 4 + 1],
           _scale[i * 4 + 2], _scale[i * 4 + 3]);
     }
     for (int i = 0; i < _thresholds.length; i += 4) {
-      Object thresId =
+      final Object thresId =
           gl.getUniformLocation(glProgram.program, 'threshold_${i ~/ 4}');
       gl.setUniform4f(thresId, _thresholds[i], _thresholds[i + 1],
           _thresholds[i + 2], _thresholds[i + 3]);
@@ -141,13 +143,13 @@ void writeUnrolledBinarySearch(ShaderMethod method, int start, int end,
     required String biasName,
     required String scaleName}) {
   if (start == end) {
-    String biasSource = '${biasName}_${start}';
-    method.addStatement('${biasName} = ${biasSource};');
-    String scaleSource = '${scaleName}_${start}';
-    method.addStatement('${scaleName} = ${scaleSource};');
+    final String biasSource = '${biasName}_$start';
+    method.addStatement('$biasName = $biasSource;');
+    final String scaleSource = '${scaleName}_$start';
+    method.addStatement('$scaleName = $scaleSource;');
   } else {
     // Add probe check.
-    int mid = (start + end) ~/ 2;
+    final int mid = (start + end) ~/ 2;
     String thresholdAtMid = '${sourcePrefix}_${(mid + 1) ~/ 4}';
     thresholdAtMid += '.${vectorComponentIndexToName((mid + 1) % 4)}';
     method.addStatement('if ($probe < $thresholdAtMid) {');

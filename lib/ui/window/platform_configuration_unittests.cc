@@ -19,35 +19,6 @@
 namespace flutter {
 namespace testing {
 
-class DummyPlatformConfigurationClient : public PlatformConfigurationClient {
- public:
-  DummyPlatformConfigurationClient() {
-    std::vector<uint8_t> data;
-    isolate_data_.reset(new ::fml::DataMapping(data));
-  }
-  std::string DefaultRouteName() override { return "TestRoute"; }
-  void ScheduleFrame() override {}
-  void Render(Scene* scene) override {}
-  void UpdateSemantics(SemanticsUpdate* update) override {}
-  void HandlePlatformMessage(
-      std::unique_ptr<PlatformMessage> message) override {}
-  FontCollection& GetFontCollection() override { return font_collection_; }
-  void UpdateIsolateDescription(const std::string isolate_name,
-                                int64_t isolate_port) override {}
-  void SetNeedsReportTimings(bool value) override {}
-  std::shared_ptr<const fml::Mapping> GetPersistentIsolateData() override {
-    return isolate_data_;
-  }
-  std::unique_ptr<std::vector<std::string>> ComputePlatformResolvedLocale(
-      const std::vector<std::string>& supported_locale_data) override {
-    return nullptr;
-  };
-
- private:
-  FontCollection font_collection_;
-  std::shared_ptr<const fml::Mapping> isolate_data_;
-};
-
 TEST_F(ShellTest, PlatformConfigurationInitialization) {
   auto message_latch = std::make_shared<fml::AutoResetWaitableEvent>();
 
@@ -103,7 +74,7 @@ TEST_F(ShellTest, PlatformConfigurationWindowMetricsUpdate) {
 
     ASSERT_NE(configuration->get_window(0), nullptr);
     configuration->get_window(0)->UpdateWindowMetrics(
-        ViewportMetrics{2.0, 10.0, 20.0});
+        ViewportMetrics{2.0, 10.0, 20.0, 22});
     ASSERT_EQ(
         configuration->get_window(0)->viewport_metrics().device_pixel_ratio,
         2.0);
@@ -111,6 +82,9 @@ TEST_F(ShellTest, PlatformConfigurationWindowMetricsUpdate) {
               10.0);
     ASSERT_EQ(configuration->get_window(0)->viewport_metrics().physical_height,
               20.0);
+    ASSERT_EQ(
+        configuration->get_window(0)->viewport_metrics().physical_touch_slop,
+        22);
 
     message_latch->Signal();
   };

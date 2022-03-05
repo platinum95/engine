@@ -4,10 +4,9 @@
 
 import 'dart:html' as html;
 
-import 'package:ui/src/engine.dart';
-
 import 'package:test/bootstrap/browser.dart';
 import 'package:test/test.dart';
+import 'package:ui/src/engine.dart';
 
 void main() {
   internalBootstrapBrowserTest(() => testMain);
@@ -24,6 +23,15 @@ void testMain() {
       expect(hostNode.node, isA<html.ShadowRoot>());
       expect((hostNode.node as html.ShadowRoot).host, rootNode);
       expect(hostNode.node, rootNode.shadowRoot);
+
+      // The shadow root should be initialized with correct parameters.
+      expect(rootNode.shadowRoot!.mode, 'open');
+      if (browserEngine != BrowserEngine.firefox &&
+          browserEngine != BrowserEngine.webkit) {
+        // Older versions of Safari and Firefox don't support this flag yet.
+        // See: https://caniuse.com/mdn-api_shadowroot_delegatesfocus
+        expect(rootNode.shadowRoot!.delegatesFocus, isFalse);
+      }
     });
 
     test('Attaches a stylesheet to the shadow root', () {
@@ -55,7 +63,7 @@ void _runDomTests(HostNode hostNode) {
     final html.Element target = html.document.createElement('div')..id = 'yep';
 
     setUp(() {
-      hostNode.nodes.addAll([
+      hostNode.nodes.addAll(<html.Node>[
         html.document.createElement('div'),
         target,
         html.document.createElement('span'),

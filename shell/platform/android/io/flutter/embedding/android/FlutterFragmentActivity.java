@@ -5,6 +5,7 @@
 package io.flutter.embedding.android;
 
 import static io.flutter.embedding.android.FlutterActivityLaunchConfigs.DART_ENTRYPOINT_META_DATA_KEY;
+import static io.flutter.embedding.android.FlutterActivityLaunchConfigs.DART_ENTRYPOINT_URI_META_DATA_KEY;
 import static io.flutter.embedding.android.FlutterActivityLaunchConfigs.DEFAULT_BACKGROUND_MODE;
 import static io.flutter.embedding.android.FlutterActivityLaunchConfigs.DEFAULT_DART_ENTRYPOINT;
 import static io.flutter.embedding.android.FlutterActivityLaunchConfigs.DEFAULT_INITIAL_ROUTE;
@@ -37,6 +38,7 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 import androidx.core.content.res.ResourcesCompat;
+import androidx.core.view.WindowCompat;
 import androidx.fragment.app.FragmentActivity;
 import androidx.fragment.app.FragmentManager;
 import io.flutter.Log;
@@ -44,7 +46,7 @@ import io.flutter.embedding.android.FlutterActivityLaunchConfigs.BackgroundMode;
 import io.flutter.embedding.engine.FlutterEngine;
 import io.flutter.embedding.engine.FlutterShellArgs;
 import io.flutter.embedding.engine.plugins.util.GeneratedPluginRegister;
-import io.flutter.plugin.platform.PlatformPlugin;
+import io.flutter.util.ViewUtils;
 
 /**
  * A Flutter {@code Activity} that is based upon {@link FragmentActivity}.
@@ -64,7 +66,8 @@ public class FlutterFragmentActivity extends FragmentActivity
   // FlutterFragment management.
   private static final String TAG_FLUTTER_FRAGMENT = "flutter_fragment";
   // TODO(mattcarroll): replace ID with R.id when build system supports R.java
-  private static final int FRAGMENT_CONTAINER_ID = 609893468; // random number
+  public static final int FRAGMENT_CONTAINER_ID =
+      ViewUtils.generateViewId(609893468); // random number
 
   /**
    * Creates an {@link Intent} that launches a {@code FlutterFragmentActivity}, which executes a
@@ -326,9 +329,8 @@ public class FlutterFragmentActivity extends FragmentActivity
   private Drawable getSplashScreenFromManifest() {
     try {
       Bundle metaData = getMetaData();
-      Integer splashScreenId =
-          metaData != null ? metaData.getInt(SPLASH_SCREEN_META_DATA_KEY) : null;
-      return splashScreenId != null
+      int splashScreenId = metaData != null ? metaData.getInt(SPLASH_SCREEN_META_DATA_KEY) : 0;
+      return splashScreenId != 0
           ? ResourcesCompat.getDrawable(getResources(), splashScreenId, getTheme())
           : null;
     } catch (Resources.NotFoundException e) {
@@ -425,6 +427,7 @@ public class FlutterFragmentActivity extends FragmentActivity
         backgroundMode == BackgroundMode.opaque
             ? TransparencyMode.opaque
             : TransparencyMode.transparent;
+    final boolean shouldDelayFirstAndroidViewDraw = renderMode == RenderMode.surface;
 
     if (getCachedEngineId() != null) {
       Log.v(
@@ -448,6 +451,7 @@ public class FlutterFragmentActivity extends FragmentActivity
           .handleDeeplinking(shouldHandleDeeplinking())
           .shouldAttachEngineToActivity(shouldAttachEngineToActivity())
           .destroyEngineWithFragment(shouldDestroyEngineWithHost())
+          .shouldDelayFirstAndroidViewDraw(shouldDelayFirstAndroidViewDraw)
           .build();
     } else {
       Log.v(
@@ -458,6 +462,9 @@ public class FlutterFragmentActivity extends FragmentActivity
               + "\n"
               + "Dart entrypoint: "
               + getDartEntrypointFunctionName()
+              + "\n"
+              + "Dart entrypoint library uri: "
+              + (getDartEntrypointLibraryUri() != null ? getDartEntrypointLibraryUri() : "\"\"")
               + "\n"
               + "Initial route: "
               + getInitialRoute()
@@ -470,6 +477,7 @@ public class FlutterFragmentActivity extends FragmentActivity
 
       return FlutterFragment.withNewEngine()
           .dartEntrypoint(getDartEntrypointFunctionName())
+          .dartLibraryUri(getDartEntrypointLibraryUri())
           .initialRoute(getInitialRoute())
           .appBundlePath(getAppBundlePath())
           .flutterShellArgs(FlutterShellArgs.fromIntent(getIntent()))
@@ -477,6 +485,7 @@ public class FlutterFragmentActivity extends FragmentActivity
           .renderMode(renderMode)
           .transparencyMode(transparencyMode)
           .shouldAttachEngineToActivity(shouldAttachEngineToActivity())
+          .shouldDelayFirstAndroidViewDraw(shouldDelayFirstAndroidViewDraw)
           .build();
     }
   }
@@ -486,7 +495,14 @@ public class FlutterFragmentActivity extends FragmentActivity
       Window window = getWindow();
       window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
       window.setStatusBarColor(0x40000000);
-      window.getDecorView().setSystemUiVisibility(PlatformPlugin.DEFAULT_SYSTEM_UI);
+      WindowCompat.setDecorFitsSystemWindows(window, false);
+      if (Build.VERSION.SDK_INT < 30) {
+        // This ensures that the navigation bar is not hidden for APIs < 30,
+        // as dictated by the implementation of WindowCompat.
+        View view = window.getDecorView();
+        view.setSystemUiVisibility(
+            view.getSystemUiVisibility() & ~View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION);
+      }
     }
   }
 
@@ -688,6 +704,32 @@ public class FlutterFragmentActivity extends FragmentActivity
       return desiredDartEntrypoint != null ? desiredDartEntrypoint : DEFAULT_DART_ENTRYPOINT;
     } catch (PackageManager.NameNotFoundException e) {
       return DEFAULT_DART_ENTRYPOINT;
+    }
+  }
+
+  /**
+   * The Dart library URI for the entrypoint that will be executed as soon as the Dart snapshot is
+   * loaded.
+   *
+   * <p>Example value: "package:foo/bar.dart"
+   *
+   * <p>This preference can be controlled by setting a {@code <meta-data>} called {@link
+   * FlutterActivityLaunchConfigs#DART_ENTRYPOINT_URI_META_DATA_KEY} within the Android manifest
+   * definition for this {@code FlutterFragmentActivity}.
+   *
+   * <p>A value of null means use the default root library.
+   *
+   * <p>Subclasses may override this method to directly control the Dart entrypoint uri.
+   */
+  @Nullable
+  public String getDartEntrypointLibraryUri() {
+    try {
+      Bundle metaData = getMetaData();
+      String desiredDartLibraryUri =
+          metaData != null ? metaData.getString(DART_ENTRYPOINT_URI_META_DATA_KEY) : null;
+      return desiredDartLibraryUri;
+    } catch (PackageManager.NameNotFoundException e) {
+      return null;
     }
   }
 

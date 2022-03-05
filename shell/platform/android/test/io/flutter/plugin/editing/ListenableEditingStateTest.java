@@ -10,6 +10,7 @@ import android.text.Selection;
 import android.view.View;
 import android.view.inputmethod.BaseInputConnection;
 import android.view.inputmethod.EditorInfo;
+import androidx.test.ext.junit.runners.AndroidJUnit4;
 import io.flutter.embedding.android.KeyboardManager;
 import io.flutter.embedding.engine.systemchannels.TextInputChannel;
 import java.util.ArrayList;
@@ -18,12 +19,11 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
-import org.robolectric.RobolectricTestRunner;
 import org.robolectric.RuntimeEnvironment;
 import org.robolectric.annotation.Config;
 
 @Config(manifest = Config.NONE)
-@RunWith(RobolectricTestRunner.class)
+@RunWith(AndroidJUnit4.class)
 public class ListenableEditingStateTest {
   @Mock KeyboardManager mockKeyboardManager;
 
@@ -39,7 +39,15 @@ public class ListenableEditingStateTest {
 
   @Before
   public void setUp() {
-    MockitoAnnotations.initMocks(this);
+    MockitoAnnotations.openMocks(this);
+  }
+
+  @Test
+  public void testConstructor() {
+    // When provided valid composing range, should not fail
+    new ListenableEditingState(
+        new TextInputChannel.TextEditState("hello", 1, 4, 1, 4),
+        new View(RuntimeEnvironment.application));
   }
 
   // -------- Start: Test BatchEditing   -------
@@ -226,6 +234,31 @@ public class ListenableEditingStateTest {
     editingState.setComposingRange(0, editingState.length());
     assertEquals(0, editingState.getComposingStart());
     assertEquals(editingState.length(), editingState.getComposingEnd());
+  }
+
+  @Test
+  public void testClearBatchDeltas() {
+    final ListenableEditingState editingState =
+        new ListenableEditingState(null, new View(RuntimeEnvironment.application));
+    editingState.replace(0, editingState.length(), "text");
+    editingState.delete(0, 1);
+    editingState.insert(0, "This is t");
+    editingState.clearBatchDeltas();
+    assertEquals(0, editingState.extractBatchTextEditingDeltas().size());
+  }
+
+  @Test
+  public void testExtractBatchTextEditingDeltas() {
+    final ListenableEditingState editingState =
+        new ListenableEditingState(null, new View(RuntimeEnvironment.application));
+
+    // Creating some deltas.
+    editingState.replace(0, editingState.length(), "test");
+    editingState.delete(0, 1);
+    editingState.insert(0, "This is a t");
+
+    ArrayList<TextEditingDelta> batchDeltas = editingState.extractBatchTextEditingDeltas();
+    assertEquals(3, batchDeltas.size());
   }
 
   // -------- Start: Test InputMethods actions   -------

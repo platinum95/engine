@@ -4,16 +4,15 @@
 
 import 'dart:html' as html;
 import 'dart:math' as math;
+import 'dart:svg' as svg;
 import 'dart:typed_data';
 
 import 'package:ui/ui.dart' as ui;
 
-import '../../engine.dart' show NullTreeSanitizer;
 import '../browser_detection.dart';
-import '../dom_renderer.dart';
 import '../engine_canvas.dart';
 import '../html_image_codec.dart';
-import '../text/paragraph.dart';
+import '../text/canvas_paragraph.dart';
 import '../util.dart';
 import '../vector_math.dart';
 import 'painting.dart';
@@ -32,12 +31,11 @@ class DomCanvas extends EngineCanvas with SaveElementStackTracking {
   @override
   void clear() {
     super.clear();
-    // TODO(yjbanov): we should measure if reusing old elements is beneficial.
-    domRenderer.clearDom(rootElement);
+    removeAllChildren(rootElement);
   }
 
   @override
-  void clipRect(ui.Rect rect, ui.ClipOp op) {
+  void clipRect(ui.Rect rect, ui.ClipOp clipOp) {
     throw UnimplementedError();
   }
 
@@ -83,7 +81,7 @@ class DomCanvas extends EngineCanvas with SaveElementStackTracking {
 
   @override
   void drawRRect(ui.RRect rrect, SurfacePaintData paint) {
-    html.Element element = buildDrawRectElement(
+    final html.Element element = buildDrawRectElement(
         rrect.outerRect, paint, 'draw-rrect', currentTransform);
     applyRRectBorderRadius(element.style, rrect);
     currentElement.append(element);
@@ -129,7 +127,7 @@ class DomCanvas extends EngineCanvas with SaveElementStackTracking {
   @override
   void drawParagraph(ui.Paragraph paragraph, ui.Offset offset) {
     final html.Element paragraphElement = drawParagraphElement(
-        paragraph as EngineParagraph, offset,
+        paragraph as CanvasParagraph, offset,
         transform: currentTransform);
     currentElement.append(paragraphElement);
   }
@@ -166,7 +164,7 @@ html.HtmlElement buildDrawRectElement(
     ui.Rect rect, SurfacePaintData paint, String tagName, Matrix4 transform) {
   assert(paint.shader == null);
   final html.HtmlElement rectangle =
-      domRenderer.createElement(tagName) as html.HtmlElement;
+      html.document.createElement(tagName) as html.HtmlElement;
   assert(() {
     rectangle.setAttribute('flt-rect', '$rect');
     rectangle.setAttribute('flt-paint', '$paint');
@@ -251,7 +249,7 @@ void applyRRectBorderRadius(html.CssStyleDeclaration style, ui.RRect rrect) {
       rrect.trRadiusX == rrect.trRadiusY &&
       rrect.blRadiusX == rrect.blRadiusY &&
       rrect.brRadiusX == rrect.brRadiusY) {
-    style.borderRadius = '${_borderStrokeToCssUnit(rrect.blRadiusX)}';
+    style.borderRadius = _borderStrokeToCssUnit(rrect.blRadiusX);
     return;
   }
   // Non-uniform. Apply each corner radius.
@@ -267,37 +265,39 @@ void applyRRectBorderRadius(html.CssStyleDeclaration style, ui.RRect rrect) {
 
 String _borderStrokeToCssUnit(double value) {
   if (value == 0) {
-    // TODO: hairline nees to take into account both dpi and density.
+    // TODO(ferhat): hairline nees to take into account both dpi and density.
     value = 1.0;
   }
   return '${value.toStringAsFixed(3)}px';
 }
 
-html.Element pathToSvgElement(
+svg.SvgSvgElement pathToSvgElement(
     SurfacePath path, SurfacePaintData paint, String width, String height) {
-  final StringBuffer sb = StringBuffer();
-  sb.write(
-      '<svg viewBox="0 0 $width $height" width="${width}px" height="${height}px">');
-  sb.write('<path ');
+  // In Firefox some SVG typed attributes are returned as null without a
+  // setter. So we use strings here.
+  final svg.SvgSvgElement root = svg.SvgSvgElement()
+    ..setAttribute('width', '${width}px')
+    ..setAttribute('height', '${height}px')
+    ..setAttribute('viewBox', '0 0 $width $height');
+
+  final svg.PathElement svgPath = svg.PathElement();
+  root.append(svgPath);
   final ui.Color color = paint.color ?? const ui.Color(0xFF000000);
   if (paint.style == ui.PaintingStyle.stroke ||
       (paint.style != ui.PaintingStyle.fill &&
           paint.strokeWidth != 0 &&
           paint.strokeWidth != null)) {
-    sb.write('stroke="${colorToCssString(color)}" ');
-    sb.write('stroke-width="${paint.strokeWidth ?? 1.0}" ');
-    sb.write('fill="none" ');
+    svgPath.setAttribute('stroke', colorToCssString(color)!);
+    svgPath.setAttribute('stroke-width', '${paint.strokeWidth ?? 1.0}');
+    svgPath.setAttribute('fill', 'none');
   } else if (paint.color != null) {
-    sb.write('fill="${colorToCssString(color)}" ');
+    svgPath.setAttribute('fill', colorToCssString(color)!);
   } else {
-    sb.write('fill="#000000" ');
+    svgPath.setAttribute('fill', '#000000');
   }
   if (path.fillType == ui.PathFillType.evenOdd) {
-    sb.write('fill-rule="evenodd" ');
+    svgPath.setAttribute('fill-rule', 'evenodd');
   }
-  sb.write('d="');
-  pathToSvg(path.pathRef, sb);
-  sb.write('"></path>');
-  sb.write('</svg>');
-  return html.Element.html(sb.toString(), treeSanitizer: NullTreeSanitizer());
+  svgPath.setAttribute('d', pathToSvg(path.pathRef));
+  return root;
 }

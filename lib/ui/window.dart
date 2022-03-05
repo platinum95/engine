@@ -225,6 +225,17 @@ abstract class FlutterView {
   ///   applications.
   WindowPadding get padding => viewConfiguration.padding;
 
+  /// {@macro dart.ui.ViewConfiguration.displayFeatures}
+  ///
+  /// When this changes, [onMetricsChanged] is called.
+  ///
+  /// See also:
+  ///
+  ///  * [WidgetsBindingObserver], for a mechanism at the widgets layer to
+  ///    observe when this value changes.
+  ///  * [MediaQuery.of], a simpler mechanism to access this data.
+  List<DisplayFeature> get displayFeatures => viewConfiguration.displayFeatures;
+
   /// Updates the view's rendering on the GPU with the newly provided [Scene].
   ///
   /// This function must be called within the scope of the
@@ -413,6 +424,15 @@ class SingletonFlutterWindow extends FlutterWindow {
   ///  * [WidgetsBindingObserver], for a mechanism at the widgets layer to
   ///    observe when this value changes.
   double get textScaleFactor => platformDispatcher.textScaleFactor;
+
+  /// Whether briefly displaying the characters as you type in obscured text
+  /// fields is enabled in system settings.
+  ///
+  /// See also:
+  ///
+  ///  * [EditableText.obscureText], which when set to true hides the text in
+  ///    the text field.
+  bool get brieflyShowPassword => platformDispatcher.brieflyShowPassword;
 
   /// The setting indicating whether time should always be shown in the 24-hour
   /// format.
@@ -870,4 +890,63 @@ class FrameData {
   ///
   /// If not provided, defaults to -1.
   final int frameNumber;
+}
+
+/// Platform specific configuration for gesture behavior, such as touch slop.
+///
+/// These settings are provided via [ViewConfiguration] to each window, and should
+/// be favored for configuring gesture behavior over the framework constants.
+///
+/// A `null` field indicates that the platform or view does not have a preference
+/// and the fallback constants should be used instead.
+class GestureSettings {
+  /// Create a new [GestureSettings] value.
+  ///
+  /// Consider using [GestureSettings.copyWith] on an existing settings object
+  /// to ensure that newly added fields are correctly set.
+  const GestureSettings({
+    this.physicalTouchSlop,
+    this.physicalDoubleTapSlop,
+  });
+
+  /// The number of physical pixels a pointer is allowed to drift before it is
+  /// considered an intentional movement.
+  ///
+  /// If `null`, the framework's default touch slop configuration should be used
+  /// instead.
+  final double? physicalTouchSlop;
+
+  /// The number of physical pixels that the first and second tap of a double tap
+  /// can drift apart to still be recognized as a double tap.
+  ///
+  /// If `null`, the framework's default double tap slop configuration should be used
+  /// instead.
+  final double? physicalDoubleTapSlop;
+
+  /// Create a new [GestureSetting]s object from an existing value, overwriting
+  /// all of the provided fields.
+  GestureSettings copyWith({
+    double? physicalTouchSlop,
+    double? physicalDoubleTapSlop,
+  }) {
+    return GestureSettings(
+      physicalTouchSlop: physicalTouchSlop ?? this.physicalTouchSlop,
+      physicalDoubleTapSlop: physicalDoubleTapSlop ?? this.physicalDoubleTapSlop,
+    );
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (other.runtimeType != runtimeType)
+      return false;
+    return other is GestureSettings &&
+      other.physicalTouchSlop == physicalTouchSlop &&
+      other.physicalDoubleTapSlop == physicalDoubleTapSlop;
+  }
+
+  @override
+  int get hashCode => hashValues(physicalTouchSlop, physicalDoubleTapSlop);
+
+  @override
+  String toString() => 'GestureSettings(physicalTouchSlop: $physicalTouchSlop, physicalDoubleTapSlop: $physicalDoubleTapSlop)';
 }

@@ -30,7 +30,7 @@ class Environment {
     final io.Directory webUiRootDir = io.Directory(
         pathlib.join(engineSrcDir.path, 'flutter', 'lib', 'web_ui'));
 
-    for (io.Directory expectedDirectory in <io.Directory>[
+    for (final io.Directory expectedDirectory in <io.Directory>[
       engineSrcDir,
       outDir,
       hostDebugUnoptDir,
@@ -38,7 +38,7 @@ class Environment {
       webUiRootDir
     ]) {
       if (!expectedDirectory.existsSync()) {
-        throw ToolException('$expectedDirectory does not exist.');
+        throw ToolExit('$expectedDirectory does not exist.');
       }
     }
 
@@ -91,10 +91,6 @@ class Environment {
 
   /// The "pub" executable file.
   String get pubExecutable => pathlib.join(dartSdkDir.path, 'bin', 'pub');
-
-  /// The "dart2js" executable file.
-  String get dart2jsExecutable =>
-      pathlib.join(dartSdkDir.path, 'bin', 'dart2js');
 
   /// Path to where github.com/flutter/engine is checked out inside the engine workspace.
   io.Directory get flutterDirectory =>
@@ -153,10 +149,10 @@ class Environment {
         'lib',
       ));
 
-  /// Path to the clone of the flutter/goldens repository.
-  io.Directory get webUiGoldensRepositoryDirectory => io.Directory(pathlib.join(
+  /// Path to the base directory to be used by Skia Gold.
+  io.Directory get webUiSkiaGoldDirectory => io.Directory(pathlib.join(
         webUiDartToolDir.path,
-        'goldens',
+        'skia_gold',
       ));
 
   /// Directory to add test results which would later be uploaded to a gcs

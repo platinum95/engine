@@ -14,28 +14,40 @@ import 'package:webkit_inspection_protocol/webkit_inspection_protocol.dart'
     as wip;
 
 import 'browser.dart';
+import 'browser_lock.dart';
 import 'chrome_installer.dart';
 import 'common.dart';
 import 'environment.dart';
 
 /// Provides an environment for desktop Chrome.
 class ChromeEnvironment implements BrowserEnvironment {
+  late final BrowserInstallation _installation;
+
   @override
   Browser launchBrowserInstance(Uri url, {bool debug = false}) {
-    return Chrome(url, debug: debug);
+    return Chrome(url, _installation, debug: debug);
   }
 
   @override
   Runtime get packageTestRuntime => Runtime.chrome;
 
   @override
-  Future<void> prepareEnvironment() async {
-    // Chrome doesn't need any special prep.
+  Future<void> prepare() async {
+    final String version = browserLock.chromeLock.versionForCurrentPlatform;
+    _installation = await getOrInstallChrome(
+      version,
+      infoLog: isCirrus ? stdout : DevNull(),
+    );
   }
 
   @override
   ScreenshotManager? getScreenshotManager() {
-    return ChromeScreenshotManager();
+    // Always compare screenshots when running tests locally. On CI only compare
+    // on Linux.
+    if (Platform.isLinux || !isLuci) {
+      return ChromeScreenshotManager();
+    }
+    return null;
   }
 
   @override
@@ -51,22 +63,16 @@ class ChromeEnvironment implements BrowserEnvironment {
 /// Any errors starting or running the process are reported through [onExit].
 class Chrome extends Browser {
   @override
-  final name = 'Chrome';
+  final String name = 'Chrome';
 
   @override
   final Future<Uri> remoteDebuggerUrl;
 
   /// Starts a new instance of Chrome open to the given [url], which may be a
   /// [Uri] or a [String].
-  factory Chrome(Uri url, {bool debug = false}) {
-    String version = ChromeArgParser.instance.version;
-    var remoteDebuggerCompleter = Completer<Uri>.sync();
+  factory Chrome(Uri url, BrowserInstallation installation, {bool debug = false}) {
+    final Completer<Uri> remoteDebuggerCompleter = Completer<Uri>.sync();
     return Chrome._(() async {
-      final BrowserInstallation installation = await getOrInstallChrome(
-        version,
-        infoLog: isCirrus ? stdout : DevNull(),
-      );
-
       // A good source of various Chrome CLI options:
       // https://peter.sh/experiments/chromium-command-line-switches/
       //
@@ -80,14 +86,21 @@ class Chrome extends Browser {
       final bool isChromeNoSandbox =
           Platform.environment['CHROME_NO_SANDBOX'] == 'true';
       final String dir = environment.webUiDartToolDir.createTempSync('test_chrome_user_data_').resolveSymbolicLinksSync();
-      var args = [
+      final List<String> args = <String>[
         '--user-data-dir=$dir',
         url.toString(),
         if (!debug)
           '--headless',
         if (isChromeNoSandbox)
           '--no-sandbox',
-        '--window-size=$kMaxScreenshotWidth,$kMaxScreenshotHeight', // When headless, this is the actual size of the viewport
+        // When headless, this is the actual size of the viewport.
+        if (!debug)
+          '--window-size=$kMaxScreenshotWidth,$kMaxScreenshotHeight',
+        // When debugging, run in maximized mode so there's enough room for DevTools.
+        if (debug)
+          '--start-maximized',
+        if (debug)
+          '--auto-open-devtools-for-tabs',
         '--disable-extensions',
         '--disable-popup-blocking',
         // Indicates that the browser is in "browse without sign-in" (Guest session) mode.
@@ -103,7 +116,7 @@ class Chrome extends Browser {
           await _spawnChromiumProcess(installation.executable, args);
 
       remoteDebuggerCompleter.complete(
-          getRemoteDebuggerUrl(Uri.parse('http://localhost:${kDevtoolsPort}')));
+          getRemoteDebuggerUrl(Uri.parse('http://localhost:$kDevtoolsPort')));
 
       unawaited(process.exitCode
           .then((_) => Directory(dir).deleteSync(recursive: true)));
@@ -112,7 +125,7 @@ class Chrome extends Browser {
     }, remoteDebuggerCompleter.future);
   }
 
-  Chrome._(Future<Process> startBrowser(), this.remoteDebuggerUrl)
+  Chrome._(Future<Process> Function() startBrowser, this.remoteDebuggerUrl)
       : super(startBrowser);
 }
 
@@ -157,8 +170,9 @@ Future<Process> _spawnChromiumProcess(String executable, List<String> args, { St
       })
       .firstWhere((String line) => line.startsWith('DevTools listening'), orElse: () {
         if (hitGlibcBug) {
-          final String message = 'Encountered glibc bug https://sourceware.org/bugzilla/show_bug.cgi?id=19329. '
-            'Will try launching browser again.';
+          const String message = 'Encountered glibc bug '
+              'https://sourceware.org/bugzilla/show_bug.cgi?id=19329. '
+              'Will try launching browser again.';
           print(message);
           return message;
         }
@@ -194,9 +208,9 @@ Future<Uri> getRemoteDebuggerUrl(Uri base) async {
     final HttpClient client = HttpClient();
     final HttpClientRequest request = await client.getUrl(base.resolve('/json/list'));
     final HttpClientResponse response = await request.close();
-    final List<dynamic> jsonObject =
-        await json.fuse(utf8).decoder.bind(response).single as List<dynamic>;
-    return base.resolve(jsonObject.first['devtoolsFrontendUrl'] as String);
+    final List<dynamic>? jsonObject =
+        await json.fuse(utf8).decoder.bind(response).single as List<dynamic>?;
+    return base.resolve(jsonObject!.first['devtoolsFrontendUrl'] as String);
   } catch (_) {
     // If we fail to talk to the remote debugger protocol, give up and return
     // the raw URL rather than crashing.
@@ -207,8 +221,9 @@ Future<Uri> getRemoteDebuggerUrl(Uri base) async {
 /// [ScreenshotManager] implementation for Chrome.
 ///
 /// This manager can be used for both macOS and Linux.
-// TODO: https://github.com/flutter/flutter/issues/65673
+// TODO(yjbanov): extends tests to Window, https://github.com/flutter/flutter/issues/65673
 class ChromeScreenshotManager extends ScreenshotManager {
+  @override
   String get filenameSuffix => '';
 
   /// Capture a screenshot of the web content.
@@ -218,7 +233,8 @@ class ChromeScreenshotManager extends ScreenshotManager {
   /// [region] is used to decide which part of the web content will be used in
   /// test image. It includes starting coordinate x,y as well as height and
   /// width of the area to capture.
-  Future<Image> capture(math.Rectangle? region) async {
+  @override
+  Future<Image> capture(math.Rectangle<num>? region) async {
     final wip.ChromeConnection chromeConnection =
         wip.ChromeConnection('localhost', kDevtoolsPort);
     final wip.ChromeTab? chromeTab = await chromeConnection.getTab(
@@ -230,7 +246,7 @@ class ChromeScreenshotManager extends ScreenshotManager {
     }
     final wip.WipConnection wipConnection = await chromeTab.connect();
 
-    Map<String, dynamic>? captureScreenshotParameters = null;
+    Map<String, dynamic>? captureScreenshotParameters;
     if (region != null) {
       captureScreenshotParameters = <String, dynamic>{
         'format': 'png',

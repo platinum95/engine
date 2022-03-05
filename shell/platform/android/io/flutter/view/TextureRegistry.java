@@ -5,6 +5,7 @@
 package io.flutter.view;
 
 import android.graphics.SurfaceTexture;
+import androidx.annotation.NonNull;
 
 // TODO(mattcarroll): re-evalute docs in this class and add nullability annotations.
 /**
@@ -18,11 +19,21 @@ public interface TextureRegistry {
    *
    * @return A SurfaceTextureEntry.
    */
+  @NonNull
   SurfaceTextureEntry createSurfaceTexture();
+
+  /**
+   * Registers a SurfaceTexture managed by the Flutter engine.
+   *
+   * @return A SurfaceTextureEntry.
+   */
+  @NonNull
+  SurfaceTextureEntry registerSurfaceTexture(@NonNull SurfaceTexture surfaceTexture);
 
   /** A registry entry for a managed SurfaceTexture. */
   interface SurfaceTextureEntry {
     /** @return The managed SurfaceTexture. */
+    @NonNull
     SurfaceTexture surfaceTexture();
 
     /** @return The identity of this SurfaceTexture. */

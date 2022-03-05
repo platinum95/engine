@@ -65,8 +65,6 @@ import io.flutter.util.ViewUtils;
  * io.flutter.embedding.engine.FlutterEngine}. The two exceptions to using a cached {@link
  * FlutterEngine} are:
  *
- * <p>
- *
  * <ul>
  *   <li>When {@code FlutterFragment} is in the first {@code Activity} displayed by the app, because
  *       pre-warming a {@link io.flutter.embedding.engine.FlutterEngine} would have no impact in
@@ -107,12 +105,18 @@ public class FlutterFragment extends Fragment
 
   /** The Dart entrypoint method name that is executed upon initialization. */
   protected static final String ARG_DART_ENTRYPOINT = "dart_entrypoint";
+  /** The Dart entrypoint method's URI that is executed upon initialization. */
+  protected static final String ARG_DART_ENTRYPOINT_URI = "dart_entrypoint_uri";
   /** Initial Flutter route that is rendered in a Navigator widget. */
   protected static final String ARG_INITIAL_ROUTE = "initial_route";
   /** Whether the activity delegate should handle the deeplinking request. */
   protected static final String ARG_HANDLE_DEEPLINKING = "handle_deeplinking";
   /** Path to Flutter's Dart code. */
   protected static final String ARG_APP_BUNDLE_PATH = "app_bundle_path";
+  /** Whether to delay the Android drawing pass till after the Flutter UI has been displayed. */
+  protected static final String ARG_SHOULD_DELAY_FIRST_ANDROID_VIEW_DRAW =
+      "should_delay_first_android_view_draw";
+
   /** Flutter shell arguments. */
   protected static final String ARG_FLUTTER_INITIALIZATION_ARGS = "initialization_args";
   /**
@@ -221,6 +225,7 @@ public class FlutterFragment extends Fragment
   public static class NewEngineFragmentBuilder {
     private final Class<? extends FlutterFragment> fragmentClass;
     private String dartEntrypoint = "main";
+    private String dartLibraryUri = null;
     private String initialRoute = "/";
     private boolean handleDeeplinking = false;
     private String appBundlePath = null;
@@ -229,6 +234,7 @@ public class FlutterFragment extends Fragment
     private TransparencyMode transparencyMode = TransparencyMode.transparent;
     private boolean shouldAttachEngineToActivity = true;
     private boolean shouldAutomaticallyHandleOnBackPressed = false;
+    private boolean shouldDelayFirstAndroidViewDraw = false;
 
     /**
      * Constructs a {@code NewEngineFragmentBuilder} that is configured to construct an instance of
@@ -250,6 +256,12 @@ public class FlutterFragment extends Fragment
     @NonNull
     public NewEngineFragmentBuilder dartEntrypoint(@NonNull String dartEntrypoint) {
       this.dartEntrypoint = dartEntrypoint;
+      return this;
+    }
+
+    @NonNull
+    public NewEngineFragmentBuilder dartLibraryUri(@NonNull String dartLibraryUri) {
+      this.dartLibraryUri = dartLibraryUri;
       return this;
     }
 
@@ -383,6 +395,18 @@ public class FlutterFragment extends Fragment
     }
 
     /**
+     * Whether to delay the Android drawing pass till after the Flutter UI has been displayed.
+     *
+     * <p>See {#link FlutterActivityAndFragmentDelegate#onCreateView} for more details.
+     */
+    @NonNull
+    public NewEngineFragmentBuilder shouldDelayFirstAndroidViewDraw(
+        boolean shouldDelayFirstAndroidViewDraw) {
+      this.shouldDelayFirstAndroidViewDraw = shouldDelayFirstAndroidViewDraw;
+      return this;
+    }
+
+    /**
      * Creates a {@link Bundle} of arguments that are assigned to the new {@code FlutterFragment}.
      *
      * <p>Subclasses should override this method to add new properties to the {@link Bundle}.
@@ -395,6 +419,7 @@ public class FlutterFragment extends Fragment
       args.putBoolean(ARG_HANDLE_DEEPLINKING, handleDeeplinking);
       args.putString(ARG_APP_BUNDLE_PATH, appBundlePath);
       args.putString(ARG_DART_ENTRYPOINT, dartEntrypoint);
+      args.putString(ARG_DART_ENTRYPOINT_URI, dartLibraryUri);
       // TODO(mattcarroll): determine if we should have an explicit FlutterTestFragment instead of
       // conflating.
       if (null != shellArgs) {
@@ -410,6 +435,7 @@ public class FlutterFragment extends Fragment
       args.putBoolean(ARG_DESTROY_ENGINE_WITH_FRAGMENT, true);
       args.putBoolean(
           ARG_SHOULD_AUTOMATICALLY_HANDLE_ON_BACK_PRESSED, shouldAutomaticallyHandleOnBackPressed);
+      args.putBoolean(ARG_SHOULD_DELAY_FIRST_ANDROID_VIEW_DRAW, shouldDelayFirstAndroidViewDraw);
       return args;
     }
 
@@ -496,6 +522,7 @@ public class FlutterFragment extends Fragment
     private TransparencyMode transparencyMode = TransparencyMode.transparent;
     private boolean shouldAttachEngineToActivity = true;
     private boolean shouldAutomaticallyHandleOnBackPressed = false;
+    private boolean shouldDelayFirstAndroidViewDraw = false;
 
     private CachedEngineFragmentBuilder(@NonNull String engineId) {
       this(FlutterFragment.class, engineId);
@@ -622,6 +649,18 @@ public class FlutterFragment extends Fragment
     }
 
     /**
+     * Whether to delay the Android drawing pass till after the Flutter UI has been displayed.
+     *
+     * <p>See {#link FlutterActivityAndFragmentDelegate#onCreateView} for more details.
+     */
+    @NonNull
+    public CachedEngineFragmentBuilder shouldDelayFirstAndroidViewDraw(
+        @NonNull boolean shouldDelayFirstAndroidViewDraw) {
+      this.shouldDelayFirstAndroidViewDraw = shouldDelayFirstAndroidViewDraw;
+      return this;
+    }
+
+    /**
      * Creates a {@link Bundle} of arguments that are assigned to the new {@code FlutterFragment}.
      *
      * <p>Subclasses should override this method to add new properties to the {@link Bundle}.
@@ -642,6 +681,7 @@ public class FlutterFragment extends Fragment
       args.putBoolean(ARG_SHOULD_ATTACH_ENGINE_TO_ACTIVITY, shouldAttachEngineToActivity);
       args.putBoolean(
           ARG_SHOULD_AUTOMATICALLY_HANDLE_ON_BACK_PRESSED, shouldAutomaticallyHandleOnBackPressed);
+      args.putBoolean(ARG_SHOULD_DELAY_FIRST_ANDROID_VIEW_DRAW, shouldDelayFirstAndroidViewDraw);
       return args;
     }
 
@@ -675,7 +715,7 @@ public class FlutterFragment extends Fragment
   // Delegate that runs all lifecycle and OS hook logic that is common between
   // FlutterActivity and FlutterFragment. See the FlutterActivityAndFragmentDelegate
   // implementation for details about why it exists.
-  @VisibleForTesting /* package */ FlutterActivityAndFragmentDelegate delegate;
+  @VisibleForTesting @Nullable /* package */ FlutterActivityAndFragmentDelegate delegate;
 
   private final OnBackPressedCallback onBackPressedCallback =
       new OnBackPressedCallback(true) {
@@ -706,6 +746,15 @@ public class FlutterFragment extends Fragment
     this.delegate = delegate;
   }
 
+  /**
+   * Returns the Android App Component exclusively attached to {@link
+   * io.flutter.embedding.engine.FlutterEngine}.
+   */
+  @Override
+  public ExclusiveAppComponent<Activity> getExclusiveAppComponent() {
+    return delegate;
+  }
+
   @Override
   public void onAttach(@NonNull Context context) {
     super.onAttach(context);
@@ -727,7 +776,11 @@ public class FlutterFragment extends Fragment
   public View onCreateView(
       LayoutInflater inflater, @Nullable ViewGroup container, @Nullable Bundle savedInstanceState) {
     return delegate.onCreateView(
-        inflater, container, savedInstanceState, /*flutterViewId=*/ FLUTTER_VIEW_ID);
+        inflater,
+        container,
+        savedInstanceState,
+        /*flutterViewId=*/ FLUTTER_VIEW_ID,
+        shouldDelayFirstAndroidViewDraw());
   }
 
   @Override
@@ -750,7 +803,9 @@ public class FlutterFragment extends Fragment
   // possible.
   @ActivityCallThrough
   public void onPostResume() {
-    delegate.onPostResume();
+    if (stillAttachedForEvent("onPostResume")) {
+      delegate.onPostResume();
+    }
   }
 
   @Override
@@ -794,11 +849,11 @@ public class FlutterFragment extends Fragment
             + " connection to the engine "
             + getFlutterEngine()
             + " evicted by another attaching activity");
-    // Redundant calls are ok.
-    delegate.onDestroyView();
-    delegate.onDetach();
-    delegate.release();
-    delegate = null;
+    if (delegate != null) {
+      // Redundant calls are ok.
+      delegate.onDestroyView();
+      delegate.onDetach();
+    }
   }
 
   @Override
@@ -988,6 +1043,20 @@ public class FlutterFragment extends Fragment
   @NonNull
   public String getDartEntrypointFunctionName() {
     return getArguments().getString(ARG_DART_ENTRYPOINT, "main");
+  }
+
+  /**
+   * Returns the library URI of the Dart method that this {@code FlutterFragment} should execute to
+   * start a Flutter app.
+   *
+   * <p>Defaults to null (example value: "package:foo/bar.dart").
+   *
+   * <p>Used by this {@code FlutterFragment}'s {@link FlutterActivityAndFragmentDelegate.Host}
+   */
+  @Override
+  @Nullable
+  public String getDartEntrypointLibraryUri() {
+    return getArguments().getString(ARG_DART_ENTRYPOINT_URI);
   }
 
   /**
@@ -1241,6 +1310,26 @@ public class FlutterFragment extends Fragment
     return true;
   }
 
+  @Override
+  public void updateSystemUiOverlays() {
+    if (delegate != null) {
+      delegate.updateSystemUiOverlays();
+    }
+  }
+
+  /**
+   * Give the host application a chance to take control of the app lifecycle events.
+   *
+   * <p>Return {@code false} means the host application dispatches these app lifecycle events, while
+   * return {@code true} means the engine dispatches these events.
+   *
+   * <p>Defaults to {@code true}.
+   */
+  @Override
+  public boolean shouldDispatchAppLifecycleState() {
+    return true;
+  }
+
   /**
    * {@inheritDoc}
    *
@@ -1267,9 +1356,19 @@ public class FlutterFragment extends Fragment
     return false;
   }
 
+  @VisibleForTesting
+  @NonNull
+  boolean shouldDelayFirstAndroidViewDraw() {
+    return getArguments().getBoolean(ARG_SHOULD_DELAY_FIRST_ANDROID_VIEW_DRAW);
+  }
+
   private boolean stillAttachedForEvent(String event) {
     if (delegate == null) {
       Log.w(TAG, "FlutterFragment " + hashCode() + " " + event + " called after release.");
+      return false;
+    }
+    if (!delegate.isAttached()) {
+      Log.w(TAG, "FlutterFragment " + hashCode() + " " + event + " called after detach.");
       return false;
     }
     return true;

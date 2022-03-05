@@ -3,9 +3,9 @@
 // found in the LICENSE file.
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:html' as html;
 import 'dart:typed_data';
-import 'dart:convert';
 
 import 'package:meta/meta.dart';
 import 'package:ui/ui.dart' as ui;
@@ -15,12 +15,13 @@ import 'canvaskit/initialization.dart';
 import 'canvaskit/layer_scene_builder.dart';
 import 'canvaskit/rasterizer.dart';
 import 'clipboard.dart';
-import 'dom_renderer.dart';
+import 'embedder.dart';
 import 'html/scene.dart';
-import 'profiler.dart';
 import 'mouse_cursor.dart';
 import 'platform_views/message_handler.dart';
 import 'plugins.dart';
+import 'profiler.dart';
+import 'safe_browser_api.dart';
 import 'semantics.dart';
 import 'services.dart';
 import 'text_editing/text_editing.dart';
@@ -43,6 +44,7 @@ class EnginePlatformDispatcher extends ui.PlatformDispatcher {
   /// these.
   EnginePlatformDispatcher._() {
     _addBrightnessMediaQueryListener();
+    _addFontSizeObserver();
   }
 
   /// The [EnginePlatformDispatcher] singleton.
@@ -53,8 +55,10 @@ class EnginePlatformDispatcher extends ui.PlatformDispatcher {
   /// The current platform configuration.
   @override
   ui.PlatformConfiguration get configuration => _configuration;
-  ui.PlatformConfiguration _configuration =
-      ui.PlatformConfiguration(locales: parseBrowserLanguages());
+  ui.PlatformConfiguration _configuration = ui.PlatformConfiguration(
+    locales: parseBrowserLanguages(),
+    textScaleFactor: findBrowserTextScaleFactor(),
+  );
 
   /// Receives all events related to platform configuration changes.
   @override
@@ -76,6 +80,7 @@ class EnginePlatformDispatcher extends ui.PlatformDispatcher {
   }
 
   /// The current list of windows,
+  @override
   Iterable<ui.FlutterView> get views => _windows.values;
   Map<Object, ui.FlutterWindow> get windows => _windows;
   Map<Object, ui.FlutterWindow> _windows = <Object, ui.FlutterWindow>{};
@@ -125,7 +130,7 @@ class EnginePlatformDispatcher extends ui.PlatformDispatcher {
 
   /// Returns device pixel ratio returned by browser.
   static double get browserDevicePixelRatio {
-    double? ratio = html.window.devicePixelRatio as double?;
+    final double? ratio = html.window.devicePixelRatio as double?;
     // Guard against WebOS returning 0 and other browsers returning null.
     return (ratio == null || ratio == 0.0) ? 1.0 : ratio;
   }
@@ -383,7 +388,7 @@ class EnginePlatformDispatcher extends ui.PlatformDispatcher {
             // Also respond in HTML mode. Otherwise, apps would have to detect
             // CanvasKit vs HTML before invoking this method.
             replyToPlatformMessage(
-                callback, codec.encodeSuccessEnvelope([true]));
+                callback, codec.encodeSuccessEnvelope(<bool>[true]));
             break;
         }
         return;
@@ -406,7 +411,7 @@ class EnginePlatformDispatcher extends ui.PlatformDispatcher {
             // TODO(gspencergoog): As multi-window support expands, the pop call
             // will need to include the window ID. Right now only one window is
             // supported.
-            (_windows[0] as EngineFlutterWindow)
+            (_windows[0]! as EngineFlutterWindow)
                 .browserHistory
                 .exit()
                 .then((_) {
@@ -415,22 +420,22 @@ class EnginePlatformDispatcher extends ui.PlatformDispatcher {
             });
             return;
           case 'HapticFeedback.vibrate':
-            final String? type = decoded.arguments;
-            domRenderer.vibrate(_getHapticFeedbackDuration(type));
+            final String? type = decoded.arguments as String?;
+            vibrate(_getHapticFeedbackDuration(type));
             replyToPlatformMessage(callback, codec.encodeSuccessEnvelope(true));
             return;
           case 'SystemChrome.setApplicationSwitcherDescription':
-            final Map<String, dynamic> arguments = decoded.arguments;
-            // TODO: Find more appropriate defaults? Or noop when values are null?
+            final Map<String, dynamic> arguments = decoded.arguments as Map<String, dynamic>;
+            // TODO(ferhat): Find more appropriate defaults? Or noop when values are null?
             final String label = arguments['label'] as String? ?? '';
             final int primaryColor = arguments['primaryColor'] as int? ?? 0xFF000000;
-            domRenderer.setTitle(label);
-            domRenderer.setThemeColor(ui.Color(primaryColor));
+            html.document.title = label;
+            setThemeColor(ui.Color(primaryColor));
             replyToPlatformMessage(callback, codec.encodeSuccessEnvelope(true));
             return;
           case 'SystemChrome.setPreferredOrientations':
-            final List<dynamic> arguments = decoded.arguments;
-            domRenderer.setPreferredOrientation(arguments).then((bool success) {
+            final List<dynamic> arguments = decoded.arguments as List<dynamic>;
+            flutterViewEmbedder.setPreferredOrientation(arguments).then((bool success) {
               replyToPlatformMessage(
                   callback, codec.encodeSuccessEnvelope(success));
             });
@@ -460,10 +465,10 @@ class EnginePlatformDispatcher extends ui.PlatformDispatcher {
       case 'flutter/mousecursor':
         const MethodCodec codec = StandardMethodCodec();
         final MethodCall decoded = codec.decodeMethodCall(data);
-        final Map<dynamic, dynamic> arguments = decoded.arguments;
+        final Map<dynamic, dynamic> arguments = decoded.arguments as Map<dynamic, dynamic>;
         switch (decoded.method) {
           case 'activateSystemCursor':
-            MouseCursor.instance!.activateSystemCursor(arguments['kind']);
+            MouseCursor.instance!.activateSystemCursor(arguments.tryString('kind'));
         }
         return;
 
@@ -479,7 +484,7 @@ class EnginePlatformDispatcher extends ui.PlatformDispatcher {
         _platformViewMessageHandler ??= PlatformViewMessageHandler(
           contentManager: platformViewManager,
           contentHandler: (html.Element content) {
-            domRenderer.glassPaneElement!.append(content);
+            flutterViewEmbedder.glassPaneElement!.append(content);
           },
         );
         _platformViewMessageHandler!.handlePlatformViewCall(data, callback!);
@@ -487,7 +492,7 @@ class EnginePlatformDispatcher extends ui.PlatformDispatcher {
 
       case 'flutter/accessibility':
         // In widget tests we want to bypass processing of platform messages.
-        final StandardMessageCodec codec = StandardMessageCodec();
+        const StandardMessageCodec codec = StandardMessageCodec();
         accessibilityAnnouncements.handleMessage(codec, data);
         replyToPlatformMessage(callback, codec.encodeMessage(true));
         return;
@@ -496,7 +501,7 @@ class EnginePlatformDispatcher extends ui.PlatformDispatcher {
         // TODO(gspencergoog): As multi-window support expands, the navigation call
         // will need to include the window ID. Right now only one window is
         // supported.
-        (_windows[0] as EngineFlutterWindow)
+        (_windows[0]! as EngineFlutterWindow)
             .handleNavigationMessage(data)
             .then((bool handled) {
           if (handled) {
@@ -526,17 +531,23 @@ class EnginePlatformDispatcher extends ui.PlatformDispatcher {
   }
 
   int _getHapticFeedbackDuration(String? type) {
+    const int vibrateLongPress = 50;
+    const int vibrateLightImpact = 10;
+    const int vibrateMediumImpact = 20;
+    const int vibrateHeavyImpact = 30;
+    const int vibrateSelectionClick = 10;
+
     switch (type) {
       case 'HapticFeedbackType.lightImpact':
-        return DomRenderer.vibrateLightImpact;
+        return vibrateLightImpact;
       case 'HapticFeedbackType.mediumImpact':
-        return DomRenderer.vibrateMediumImpact;
+        return vibrateMediumImpact;
       case 'HapticFeedbackType.heavyImpact':
-        return DomRenderer.vibrateHeavyImpact;
+        return vibrateHeavyImpact;
       case 'HapticFeedbackType.selectionClick':
-        return DomRenderer.vibrateSelectionClick;
+        return vibrateSelectionClick;
       default:
-        return DomRenderer.vibrateLongPress;
+        return vibrateLongPress;
     }
   }
 
@@ -550,7 +561,7 @@ class EnginePlatformDispatcher extends ui.PlatformDispatcher {
   @override
   void scheduleFrame() {
     if (scheduleFrameCallback == null) {
-      throw new Exception('scheduleFrameCallback must be initialized first.');
+      throw Exception('scheduleFrameCallback must be initialized first.');
     }
     scheduleFrameCallback!();
   }
@@ -596,12 +607,13 @@ class EnginePlatformDispatcher extends ui.PlatformDispatcher {
       rasterizer!.draw(layerScene.layerTree);
     } else {
       final SurfaceScene surfaceScene = scene as SurfaceScene;
-      domRenderer.renderScene(surfaceScene.webOnlyRootElement);
+      flutterViewEmbedder.renderScene(surfaceScene.webOnlyRootElement);
     }
     frameTimingsOnRasterFinish();
   }
 
   /// Additional accessibility features that may be enabled by the platform.
+  @override
   ui.AccessibilityFeatures get accessibilityFeatures =>
       configuration.accessibilityFeatures;
 
@@ -609,10 +621,12 @@ class EnginePlatformDispatcher extends ui.PlatformDispatcher {
   ///
   /// The framework invokes this callback in the same zone in which the
   /// callback was set.
+  @override
   ui.VoidCallback? get onAccessibilityFeaturesChanged =>
       _onAccessibilityFeaturesChanged;
   ui.VoidCallback? _onAccessibilityFeaturesChanged;
   Zone? _onAccessibilityFeaturesChangedZone;
+  @override
   set onAccessibilityFeaturesChanged(ui.VoidCallback? callback) {
     _onAccessibilityFeaturesChanged = callback;
     _onAccessibilityFeaturesChangedZone = Zone.current;
@@ -632,6 +646,7 @@ class EnginePlatformDispatcher extends ui.PlatformDispatcher {
   ///
   /// In either case, this function disposes the given update, which means the
   /// semantics update cannot be used further.
+  @override
   void updateSemantics(ui.SemanticsUpdate update) {
     EngineSemanticsOwner.instance.updateSemantics(update);
   }
@@ -648,6 +663,7 @@ class EnginePlatformDispatcher extends ui.PlatformDispatcher {
   ///
   /// * https://developer.mozilla.org/en-US/docs/Web/API/NavigatorLanguage/languages,
   ///   which explains browser quirks in the implementation notes.
+  @override
   ui.Locale get locale =>
       locales.isEmpty ? const ui.Locale.fromSubtags() : locales.first;
 
@@ -665,6 +681,7 @@ class EnginePlatformDispatcher extends ui.PlatformDispatcher {
   ///
   ///  * [WidgetsBindingObserver], for a mechanism at the widgets layer to
   ///    observe when this value changes.
+  @override
   List<ui.Locale> get locales => configuration.locales;
 
   /// Performs the platform-native locale resolution.
@@ -675,6 +692,7 @@ class EnginePlatformDispatcher extends ui.PlatformDispatcher {
   ///
   /// This method returns synchronously and is a direct call to
   /// platform specific APIs without invoking method channels.
+  @override
   ui.Locale? computePlatformResolvedLocale(List<ui.Locale> supportedLocales) {
     // TODO(garyq): Implement on web.
     return null;
@@ -689,16 +707,18 @@ class EnginePlatformDispatcher extends ui.PlatformDispatcher {
   ///
   ///  * [WidgetsBindingObserver], for a mechanism at the widgets layer to
   ///    observe when this callback is invoked.
+  @override
   ui.VoidCallback? get onLocaleChanged => _onLocaleChanged;
   ui.VoidCallback? _onLocaleChanged;
   Zone? _onLocaleChangedZone;
+  @override
   set onLocaleChanged(ui.VoidCallback? callback) {
     _onLocaleChanged = callback;
     _onLocaleChangedZone = Zone.current;
   }
 
   /// The locale used when we fail to get the list from the browser.
-  static const ui.Locale _defaultLocale = const ui.Locale('en', 'US');
+  static const ui.Locale _defaultLocale = ui.Locale('en', 'US');
 
   /// Sets locales to an empty list.
   ///
@@ -708,18 +728,18 @@ class EnginePlatformDispatcher extends ui.PlatformDispatcher {
     _configuration = _configuration.copyWith(locales: const <ui.Locale>[]);
   }
 
-  // Called by DomRenderer when browser languages change.
+  // Called by FlutterViewEmbedder when browser languages change.
   void updateLocales() {
     _configuration = _configuration.copyWith(locales: parseBrowserLanguages());
   }
 
   static List<ui.Locale> parseBrowserLanguages() {
     // TODO(yjbanov): find a solution for IE
-    var languages = html.window.navigator.languages;
+    final List<String>? languages = html.window.navigator.languages;
     if (languages == null || languages.isEmpty) {
       // To make it easier for the app code, let's not leave the locales list
       // empty. This way there's fewer corner cases for apps to handle.
-      return const [_defaultLocale];
+      return const <ui.Locale>[_defaultLocale];
     }
 
     final List<ui.Locale> locales = <ui.Locale>[];
@@ -754,13 +774,63 @@ class EnginePlatformDispatcher extends ui.PlatformDispatcher {
   ///
   ///  * [WidgetsBindingObserver], for a mechanism at the widgets layer to
   ///    observe when this value changes.
+  @override
   double get textScaleFactor => configuration.textScaleFactor;
 
   /// The setting indicating whether time should always be shown in the 24-hour
   /// format.
   ///
   /// This option is used by [showTimePicker].
+  @override
   bool get alwaysUse24HourFormat => configuration.alwaysUse24HourFormat;
+
+  /// Updates [textScaleFactor] and invokes [onTextScaleFactorChanged] and
+  /// [onPlatformConfigurationChanged] callbacks if [textScaleFactor] changed.
+  void _updateTextScaleFactor(double value) {
+    if (configuration.textScaleFactor != value) {
+      _configuration = configuration.copyWith(textScaleFactor: value);
+      invokeOnPlatformConfigurationChanged();
+      invokeOnTextScaleFactorChanged();
+    }
+  }
+
+  /// Watches for font-size changes in the browser's <html> element to
+  /// recalculate [textScaleFactor].
+  ///
+  /// Updates [textScaleFactor] with the new value.
+  html.MutationObserver? _fontSizeObserver;
+
+  /// Set the callback function for updating [textScaleFactor] based on
+  /// font-size changes in the browser's <html> element.
+  void _addFontSizeObserver() {
+    const String styleAttribute = 'style';
+
+    _fontSizeObserver = html.MutationObserver(
+        (List<dynamic> mutations, html.MutationObserver _) {
+      for (final dynamic mutation in mutations) {
+        final html.MutationRecord record = mutation as html.MutationRecord;
+        if (record.type == 'attributes' &&
+            record.attributeName == styleAttribute) {
+          final double newTextScaleFactor = findBrowserTextScaleFactor();
+          _updateTextScaleFactor(newTextScaleFactor);
+        }
+      }
+    });
+    _fontSizeObserver!.observe(
+      html.document.documentElement!,
+      attributes: true,
+      attributeFilter: <String>[styleAttribute],
+    );
+    registerHotRestartListener(() {
+      _disconnectFontSizeObserver();
+    });
+  }
+
+  /// Remove the observer for font-size changes in the browser's <html> element.
+  void _disconnectFontSizeObserver() {
+    _fontSizeObserver?.disconnect();
+    _fontSizeObserver = null;
+  }
 
   /// A callback that is invoked whenever [textScaleFactor] changes value.
   ///
@@ -771,9 +841,11 @@ class EnginePlatformDispatcher extends ui.PlatformDispatcher {
   ///
   ///  * [WidgetsBindingObserver], for a mechanism at the widgets layer to
   ///    observe when this callback is invoked.
+  @override
   ui.VoidCallback? get onTextScaleFactorChanged => _onTextScaleFactorChanged;
   ui.VoidCallback? _onTextScaleFactorChanged;
   Zone? _onTextScaleFactorChangedZone;
+  @override
   set onTextScaleFactorChanged(ui.VoidCallback? callback) {
     _onTextScaleFactorChanged = callback;
     _onTextScaleFactorChangedZone = Zone.current;
@@ -796,6 +868,7 @@ class EnginePlatformDispatcher extends ui.PlatformDispatcher {
 
   /// The setting indicating the current brightness mode of the host platform.
   /// If the platform has no preference, [platformBrightness] defaults to [Brightness.light].
+  @override
   ui.Brightness get platformBrightness => configuration.platformBrightness;
 
   /// Updates [_platformBrightness] and invokes [onPlatformBrightnessChanged]
@@ -850,10 +923,12 @@ class EnginePlatformDispatcher extends ui.PlatformDispatcher {
   ///
   ///  * [WidgetsBindingObserver], for a mechanism at the widgets layer to
   ///    observe when this callback is invoked.
+  @override
   ui.VoidCallback? get onPlatformBrightnessChanged =>
       _onPlatformBrightnessChanged;
   ui.VoidCallback? _onPlatformBrightnessChanged;
   Zone? _onPlatformBrightnessChangedZone;
+  @override
   set onPlatformBrightnessChanged(ui.VoidCallback? callback) {
     _onPlatformBrightnessChanged = callback;
     _onPlatformBrightnessChangedZone = Zone.current;
@@ -870,15 +945,18 @@ class EnginePlatformDispatcher extends ui.PlatformDispatcher {
   ///
   /// The [onSemanticsEnabledChanged] callback is called whenever this value
   /// changes.
+  @override
   bool get semanticsEnabled => configuration.semanticsEnabled;
 
   /// A callback that is invoked when the value of [semanticsEnabled] changes.
   ///
   /// The framework invokes this callback in the same zone in which the
   /// callback was set.
+  @override
   ui.VoidCallback? get onSemanticsEnabledChanged => _onSemanticsEnabledChanged;
   ui.VoidCallback? _onSemanticsEnabledChanged;
   Zone? _onSemanticsEnabledChangedZone;
+  @override
   set onSemanticsEnabledChanged(ui.VoidCallback? callback) {
     _onSemanticsEnabledChanged = callback;
     _onSemanticsEnabledChangedZone = Zone.current;
@@ -898,9 +976,11 @@ class EnginePlatformDispatcher extends ui.PlatformDispatcher {
   ///
   /// The framework invokes this callback in the same zone in which the
   /// callback was set.
+  @override
   ui.SemanticsActionCallback? get onSemanticsAction => _onSemanticsAction;
   ui.SemanticsActionCallback? _onSemanticsAction;
   Zone? _onSemanticsActionZone;
+  @override
   set onSemanticsAction(ui.SemanticsActionCallback? callback) {
     _onSemanticsAction = callback;
     _onSemanticsActionZone = Zone.current;
@@ -944,6 +1024,7 @@ class EnginePlatformDispatcher extends ui.PlatformDispatcher {
   ///  * [Navigator], a widget that handles routing.
   ///  * [SystemChannels.navigation], which handles subsequent navigation
   ///    requests from the embedder.
+  @override
   String get defaultRouteName {
     return _defaultRouteName ??=
         (_windows[0]! as EngineFlutterWindow).browserHistory.currentPath;
@@ -952,7 +1033,7 @@ class EnginePlatformDispatcher extends ui.PlatformDispatcher {
   /// Lazily initialized when the `defaultRouteName` getter is invoked.
   ///
   /// The reason for the lazy initialization is to give enough time for the app
-  /// to set [locationStrategy] in `lib/src/ui/initialization.dart`.
+  /// to set [locationStrategy] in `lib/initialization.dart`.
   String? _defaultRouteName;
 
   @visibleForTesting
@@ -972,12 +1053,13 @@ class EnginePlatformDispatcher extends ui.PlatformDispatcher {
     });
   }
 
+  @override
   ui.FrameData get frameData => const ui.FrameData.webOnly();
 }
 
 bool _handleWebTestEnd2EndMessage(MethodCodec codec, ByteData? data) {
   final MethodCall decoded = codec.decodeMethodCall(data);
-  double ratio = double.parse(decoded.arguments);
+  final double ratio = double.parse(decoded.arguments as String);
   switch (decoded.method) {
     case 'setDevicePixelRatio':
       window.debugOverrideDevicePixelRatio(ratio);
@@ -988,7 +1070,7 @@ bool _handleWebTestEnd2EndMessage(MethodCodec codec, ByteData? data) {
 }
 
 /// Invokes [callback] inside the given [zone].
-void invoke(void callback()?, Zone? zone) {
+void invoke(void Function()? callback, Zone? zone) {
   if (callback == null) {
     return;
   }
@@ -1003,7 +1085,7 @@ void invoke(void callback()?, Zone? zone) {
 }
 
 /// Invokes [callback] inside the given [zone] passing it [arg].
-void invoke1<A>(void callback(A a)?, Zone? zone, A arg) {
+void invoke1<A>(void Function(A a)? callback, Zone? zone, A arg) {
   if (callback == null) {
     return;
   }
@@ -1051,4 +1133,13 @@ void invoke3<A1, A2, A3>(void Function(A1 a1, A2 a2, A3 a3)? callback,
       callback(arg1, arg2, arg3);
     });
   }
+}
+
+const double _defaultRootFontSize = 16.0;
+
+/// Finds the text scale factor of the browser by looking at the computed style
+/// of the browser's <html> element.
+double findBrowserTextScaleFactor() {
+  final num fontSize = parseFontSize(html.document.documentElement!) ?? _defaultRootFontSize;
+  return fontSize / _defaultRootFontSize;
 }

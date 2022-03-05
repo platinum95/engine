@@ -5,8 +5,8 @@
 import 'dart:html' as html;
 import 'dart:math' as math;
 
-import 'package:ui/ui.dart' as ui;
 import 'package:meta/meta.dart';
+import 'package:ui/ui.dart' as ui;
 
 import 'canvas_paragraph.dart';
 import 'line_breaker.dart';
@@ -121,7 +121,7 @@ class TextLayoutService {
       // *** THE MAIN MEASUREMENT PART *** //
       // ********************************* //
 
-      final ParagraphSpan span = paragraph.spans[spanIndex];
+      ParagraphSpan span = paragraph.spans[spanIndex];
 
       if (span is PlaceholderSpan) {
         if (currentLine.widthIncludingSpace + span.width <= constraints.width) {
@@ -143,9 +143,6 @@ class TextLayoutService {
             currentLine.getAdditionalWidthTo(nextBreak.lineBreak);
 
         if (currentLine.width + additionalWidth <= constraints.width) {
-          // TODO(mdebbar): Handle the case when `nextBreak` is just a span end
-          //                that shouldn't extend the line yet.
-
           // The line can extend to `nextBreak` without overflowing.
           currentLine.extendTo(nextBreak);
           if (nextBreak.type == LineBreakType.mandatory) {
@@ -168,8 +165,8 @@ class TextLayoutService {
             );
             lines.add(currentLine.build(ellipsis: ellipsis));
             break;
-          } else if (currentLine.isEmpty) {
-            // The current line is still empty, which means we are dealing
+          } else if (currentLine.isNotBreakable) {
+            // The entire line is unbreakable, which means we are dealing
             // with a single block of text that doesn't fit in a single line.
             // We need to force-break it without adding an ellipsis.
 
@@ -178,6 +175,16 @@ class TextLayoutService {
             currentLine = currentLine.nextLine();
           } else {
             // Normal line break.
+            currentLine.revertToLastBreakOpportunity();
+            // If a revert had occurred in the line, we need to revert the span
+            // index accordingly.
+            //
+            // If no revert occurred, then `revertedToSpan` will be equal to
+            // `span` and the following while loop won't do anything.
+            final ParagraphSpan revertedToSpan = currentLine.lastSegment.span;
+            while (span != revertedToSpan) {
+              span = paragraph.spans[--spanIndex];
+            }
             lines.add(currentLine.build());
             currentLine = currentLine.nextLine();
           }
@@ -266,7 +273,7 @@ class TextLayoutService {
   List<ui.TextBox> getBoxesForPlaceholders() {
     final List<ui.TextBox> boxes = <ui.TextBox>[];
     for (final EngineLineMetrics line in lines) {
-      for (final RangeBox box in line.boxes!) {
+      for (final RangeBox box in line.boxes) {
         if (box is PlaceholderBox) {
           boxes.add(box.toTextBox(line));
         }
@@ -296,7 +303,7 @@ class TextLayoutService {
 
     for (final EngineLineMetrics line in lines) {
       if (line.overlapsWith(start, end)) {
-        for (final RangeBox box in line.boxes!) {
+        for (final RangeBox box in line.boxes) {
           if (box is SpanBox && box.overlapsWith(start, end)) {
             boxes.add(box.intersect(line, start, end));
           }
@@ -329,7 +336,7 @@ class TextLayoutService {
     }
 
     final double dx = offset.dx - line.left;
-    for (final RangeBox box in line.boxes!) {
+    for (final RangeBox box in line.boxes) {
       if (box.left <= dx && dx <= box.right) {
         return box.getPositionForX(dx);
       }
@@ -342,7 +349,7 @@ class TextLayoutService {
     // We could do a binary search here but it's not worth it because the number
     // of line is typically low, and each iteration is a cheap comparison of
     // doubles.
-    for (EngineLineMetrics line in lines) {
+    for (final EngineLineMetrics line in lines) {
       if (y <= line.height) {
         return line;
       }
@@ -518,7 +525,7 @@ class PlaceholderBox extends RangeBox {
 /// Represents a box in a [FlatTextSpan].
 class SpanBox extends RangeBox {
   SpanBox(
-    Spanometer spanometer, {
+    this.spanometer, {
     required LineBreakResult start,
     required LineBreakResult end,
     required double width,
@@ -526,8 +533,7 @@ class SpanBox extends RangeBox {
     required ui.TextDirection boxDirection,
     required this.contentDirection,
     required this.isSpaceOnly,
-  })  : this.spanometer = spanometer,
-        span = spanometer.currentSpan,
+  })  : span = spanometer.currentSpan,
         height = spanometer.height,
         baseline = spanometer.ascent,
         super(start, end, width, paragraphDirection, boxDirection);
@@ -576,7 +582,7 @@ class SpanBox extends RangeBox {
   /// Whether this box's range overlaps with the range from [startIndex] to
   /// [endIndex].
   bool overlapsWith(int startIndex, int endIndex) {
-    return startIndex < this.end.index && this.start.index < endIndex;
+    return startIndex < end.index && start.index < endIndex;
   }
 
   /// Returns the substring of the paragraph that's represented by this box.
@@ -816,7 +822,7 @@ class LineBuilder {
     required this.start,
     required this.lineNumber,
     required this.accumulatedHeight,
-  }) : end = start;
+  }) : _end = start;
 
   /// Creates a [LineBuilder] for the first line in a paragraph.
   factory LineBuilder.first(
@@ -829,7 +835,7 @@ class LineBuilder {
       spanometer,
       maxWidth: maxWidth,
       lineNumber: 0,
-      start: LineBreakResult.sameIndex(0, LineBreakType.prohibited),
+      start: const LineBreakResult.sameIndex(0, LineBreakType.prohibited),
       accumulatedHeight: 0.0,
     );
   }
@@ -847,7 +853,14 @@ class LineBuilder {
   final double accumulatedHeight;
 
   /// The index of the end of the line so far.
-  LineBreakResult end;
+  LineBreakResult get end => _end;
+  LineBreakResult _end;
+  set end(LineBreakResult value) {
+    if (value.type != LineBreakType.prohibited) {
+      isBreakable = true;
+    }
+    _end = value;
+  }
 
   /// The width of the line so far, excluding trailing white space.
   double width = 0.0;
@@ -869,6 +882,17 @@ class LineBuilder {
 
   /// The last segment in this line.
   LineSegment get lastSegment => _segments.last;
+
+  /// Returns true if there is at least one break opportunity in the line.
+  bool isBreakable = false;
+
+  /// Returns true if there's no break opportunity in the line.
+  bool get isNotBreakable => !isBreakable;
+
+  /// Whether the end of this line is a prohibited break.
+  bool get isEndProhibited => end.type == LineBreakType.prohibited;
+
+  int _spaceBoxCount = 0;
 
   bool get isEmpty => _segments.isEmpty;
   bool get isNotEmpty => _segments.isNotEmpty;
@@ -907,7 +931,7 @@ class LineBuilder {
     if (_boxes.isEmpty) {
       return false;
     }
-    return (_boxes.last is PlaceholderBox);
+    return _boxes.last is PlaceholderBox;
   }
 
   ui.TextDirection get _paragraphDirection =>
@@ -985,7 +1009,7 @@ class LineBuilder {
         break;
 
       case ui.PlaceholderAlignment.middle:
-        final double textMidPoint = this.height / 2;
+        final double textMidPoint = height / 2;
         final double placeholderMidPoint = placeholder.height / 2;
         final double diff = placeholderMidPoint - textMidPoint;
         ascent = this.ascent + diff;
@@ -1027,6 +1051,8 @@ class LineBuilder {
       boxDirection: _currentBoxDirection,
     ));
     _currentBoxStartOffset = widthIncludingSpace;
+    // Breaking is always allowed after a placeholder.
+    isBreakable = true;
   }
 
   /// Creates a new segment to be appended to the end of this line.
@@ -1097,6 +1123,18 @@ class LineBuilder {
           widthOfTrailingSpace += _segments[i].widthOfTrailingSpace;
         }
         width -= widthOfTrailingSpace;
+      }
+    }
+
+    // Now let's fixes boxes if they need fixing.
+    //
+    // If we popped a segment of an already created box, we should pop the box
+    // too.
+    if (_currentBoxStart.index > poppedSegment.start.index) {
+      final RangeBox poppedBox = _boxes.removeLast();
+      _currentBoxStartOffset -= poppedBox.width;
+      if (poppedBox is SpanBox && poppedBox.isSpaceOnly) {
+        _spaceBoxCount--;
       }
     }
 
@@ -1175,12 +1213,28 @@ class LineBuilder {
 
     // There's a possibility that the end of line has moved backwards, so we
     // need to remove some boxes in that case.
-    while (_boxes.length > 0 && _boxes.last.end.index > breakingPoint) {
+    while (_boxes.isNotEmpty && _boxes.last.end.index > breakingPoint) {
       _boxes.removeLast();
     }
     _currentBoxStartOffset = widthIncludingSpace;
 
     extendTo(nextBreak.copyWithIndex(breakingPoint));
+  }
+
+  /// Looks for the last break opportunity in the line and reverts the line to
+  /// that point.
+  ///
+  /// If the line already ends with a break opportunity, this method does
+  /// nothing.
+  void revertToLastBreakOpportunity() {
+    assert(isBreakable);
+    while (isEndProhibited) {
+      _popSegment();
+    }
+    // Make sure the line is not empty and still breakable after popping a few
+    // segments.
+    assert(isNotEmpty);
+    assert(isBreakable);
   }
 
   LineBreakResult get _currentBoxStart {
@@ -1225,6 +1279,10 @@ class LineBuilder {
       isSpaceOnly: isSpaceOnly,
     ));
 
+    if (isSpaceOnly) {
+      _spaceBoxCount++;
+    }
+
     _currentBoxStartOffset = widthIncludingSpace;
   }
 
@@ -1259,6 +1317,7 @@ class LineBuilder {
       ascent: ascent,
       descent: descent,
       boxes: _boxes,
+      spaceBoxCount: _spaceBoxCount,
     );
   }
 
@@ -1361,13 +1420,21 @@ class LineBuilder {
     return cumulativeWidth;
   }
 
+  LineBreakResult? _cachedNextBreak;
+
   /// Finds the next line break after the end of this line.
   DirectionalPosition findNextBreak() {
+    LineBreakResult? nextBreak = _cachedNextBreak;
     final String text = paragraph.toPlainText();
-    final int maxEnd = spanometer.currentSpan.end;
-    final LineBreakResult result = nextLineBreak(text, end.index, maxEnd: maxEnd);
+    // Don't recompute the `nextBreak` until the line has reached the previously
+    // computed `nextBreak`.
+    if (nextBreak == null || end.index >= nextBreak.index) {
+      final int maxEnd = spanometer.currentSpan.end;
+      nextBreak = nextLineBreak(text, end.index, maxEnd: maxEnd);
+      _cachedNextBreak = nextBreak;
+    }
     // The current end of the line is the beginning of the next block.
-    return getDirectionalBlockEnd(text, end, result);
+    return getDirectionalBlockEnd(text, end, nextBreak);
   }
 
   /// Creates a new [LineBuilder] to build the next line in the paragraph.
